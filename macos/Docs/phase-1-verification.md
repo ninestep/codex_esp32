@@ -36,7 +36,7 @@ Sandbox delta: the two SwiftPM managed-sandbox failures were environment restric
 | --- | --- | ---: | --- |
 | Core platform boundary | `rg -n 'import (AppKit\|SwiftUI\|CoreBluetooth\|CoreAudio)\|Ghostty\|AppleScript' macos/Sources/CodexRemoteCore` | 1 | Clean: no matches. `CodexRemoteCore` stays free of AppKit, SwiftUI, CoreBluetooth, CoreAudio, Ghostty, and AppleScript references. |
 | Prompt/transcript surface | `rg -n 'last_assistant_message\|prompt\|transcript' macos/Sources macos/Tests` | 0 | Reviewed all matches. Runtime code only decodes official hook fields in `RawHookPayloadMapper`; remaining hits are state-classification tests, codec tests, helper command fixtures, and the zsh shim argument fixture. No runtime full transcript/message logging was found. |
-| Common secret strings | `rg -n '(Bearer \|api[_-]?key\|BEGIN .*PRIVATE KEY\|password\s*[=:])' macos docs/superpowers` | 1 | Clean: no matches. |
+| Common secret strings | `rg -n '(Bearer \|api[_-]?key\|BEGIN .*PRIVATE KEY\|password\s*[=:])' macos docs/superpowers -g '!macos/Docs/phase-1-verification.md'` | 1 | Clean: no matches. The report file is excluded because it contains the scan pattern itself and would otherwise self-match. |
 
 ## Task11 static evidence
 
@@ -61,15 +61,17 @@ Task10 did not fresh rerun `swift test` or the zsh shim suite. Task11 reran them
 
 ## Ghostty live targeting
 
+The temp path, process ids, window id, and terminal UUIDs below are one-time Task10 audit evidence, not secrets. A separate release packaging step may redact them while retaining the original verification log.
+
 Helper smoke:
 
 | Check | Command | Exit | Evidence |
 | --- | --- | ---: | --- |
-| Private temp parent | `mktemp -d /private/tmp/codex-remote-task10.XXXXXX` | 0 | `/private/tmp/codex-remote-task10.<redacted>` |
-| Parent mode | `chmod 700 /private/tmp/codex-remote-task10.<redacted>` then `stat -f '%Sp %p' /private/tmp/codex-remote-task10.<redacted>` | 0 | `drwx------ 40700` |
-| Helper serve | `.build/debug/codex-remote-helper serve --socket /private/tmp/codex-remote-task10.<redacted>/events.sock` | running during smoke | Helper tool session id was `<tool-session-id>` |
-| Socket type and mode | `stat -f '%HT %Sp %p' /private/tmp/codex-remote-task10.<redacted>/events.sock` | 0 | `Socket srw------- 140600` |
-| Empty session list | `.build/debug/codex-remote-helper list --socket /private/tmp/codex-remote-task10.<redacted>/events.sock --json` | 0 | `{"sessions":[],"version":1,"type":"sessions"}` |
+| Private temp parent | `mktemp -d /private/tmp/codex-remote-task10.XXXXXX` | 0 | `/private/tmp/codex-remote-task10.2PKb9e` |
+| Parent mode | `chmod 700 /private/tmp/codex-remote-task10.2PKb9e` then `stat -f '%Sp %p' /private/tmp/codex-remote-task10.2PKb9e` | 0 | `drwx------ 40700` |
+| Helper serve | `.build/debug/codex-remote-helper serve --socket /private/tmp/codex-remote-task10.2PKb9e/events.sock` | running during smoke | Helper tool session id was `63406` |
+| Socket type and mode | `stat -f '%HT %Sp %p' /private/tmp/codex-remote-task10.2PKb9e/events.sock` | 0 | `Socket srw------- 140600` |
+| Empty session list | `.build/debug/codex-remote-helper list --socket /private/tmp/codex-remote-task10.2PKb9e/events.sock --json` | 0 | `{"sessions":[],"version":1,"type":"sessions"}` |
 
 GUI approval and targeting:
 
@@ -77,9 +79,9 @@ GUI approval and targeting:
 | --- | --- | ---: | --- |
 | Plain AppleScript by app name | `osascript -e 'tell application "Ghostty" to return version'` | 1 | Failed with `不能获得 application "Ghostty"` |
 | Approved AppleScript by bundle id | `osascript -e 'tell application id "com.mitchellh.ghostty" to return version'` | 0 | `1.3.1` |
-| Disposable window creation | Approved `osascript` using `new window` and `new tab` | 0 | Disposable window id `<task10-window>`; waiter terminal ids `A` and `B` |
-| Initial input logs | `stat -f '%N %z bytes' /private/tmp/codex-remote-task10.<redacted>/ghostty-a.hex` and same for B | 0 | A `0 bytes`; B `0 bytes` |
-| Targeted focus, scroll, Enter, Esc | Approved `osascript` targeting terminal A by id, then focusing B and A by id | 0 | Focus readback proved B then A (`B\|A`) |
+| Disposable window creation | Approved `osascript` using `new window` and `new tab` | 0 | Window id `tab-group-600002198cf0`; waiter terminal ids A `9FB0163E-6D55-4524-90C9-636B317FE93E` and B `45CD3315-2FB5-4E1B-85CC-7F4D41EBAF49` |
+| Initial input logs | `stat -f '%N %z bytes' /private/tmp/codex-remote-task10.2PKb9e/ghostty-a.hex` and same for B | 0 | A `0 bytes`; B `0 bytes` |
+| Targeted focus, scroll, Enter, Esc | Approved `osascript` targeting terminal A by id, then focusing B and A by id | 0 | Focus readback `45CD3315-2FB5-4E1B-85CC-7F4D41EBAF49\|9FB0163E-6D55-4524-90C9-636B317FE93E` |
 | Input isolation | `xxd -p` and `stat` on both raw-mode logs | 0 | A hex-log file contained `0d` and `1b` entries; B remained `0 bytes` |
 
 Result: PASS for Ghostty targeted focus, scroll, Enter, and Esc isolation. The targeted terminal received Enter/Esc (`0d` and `1b`), and the other disposable terminal received no input.
@@ -88,8 +90,8 @@ Same-directory shell evidence:
 
 | Check | Command | Exit | Evidence |
 | --- | --- | ---: | --- |
-| Additional disposable Codex tabs | Approved `osascript` using `new tab` in the Task10 disposable window | 0 | Distinct disposable terminal ids `C` and `D` |
-| Same cwd readback | Approved read-only `osascript` against both terminal ids | 0 | Both disposable terminals reported `/Users/wj/data/mcp/esp32/.worktrees/macos-session-control` |
+| Additional disposable Codex tabs | Approved `osascript` using `new tab` in the Task10 disposable window | 0 | Terminal ids C `22CC4423-7892-4887-9B32-6723C9097369` and D `3244583F-9F12-40A3-8CAA-30613296714D` |
+| Same cwd readback | Approved read-only `osascript` against both terminal ids | 0 | `/Users/wj/data/mcp/esp32/.worktrees/macos-session-control\|/Users/wj/data/mcp/esp32/.worktrees/macos-session-control` |
 
 Result: PASS for same-directory shell/cwd separation and distinct Ghostty terminal ids. This does not prove live launcher/provider mapping.
 
@@ -97,9 +99,9 @@ Cleanup confirmed by root agent after the smoke:
 
 | Check | Evidence |
 | --- | --- |
-| Helper shutdown | `lsof` confirmed the helper process bound the exact socket; `TERM` succeeded; socket disappeared |
-| Ghostty cleanup | `close window` was applied only to the Task10 disposable window id; subsequent existence check returned `false` |
-| Temp cleanup | Exact temp path `/private/tmp/codex-remote-task10.<redacted>` was removed; `test ! -e` exited 0 |
+| Helper shutdown | `lsof` confirmed helper PID `93231` bound the exact socket; `TERM` succeeded; socket disappeared |
+| Ghostty cleanup | `close window` was applied only to window id `tab-group-600002198cf0`; subsequent existence check returned `false` |
+| Temp cleanup | Exact path `/private/tmp/codex-remote-task10.2PKb9e` was removed; `test ! -e` exited 0 |
 
 ## Codex hook lifecycle
 
