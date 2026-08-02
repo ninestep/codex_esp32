@@ -12,7 +12,7 @@ final class GhosttyAppleScriptControllerTests: XCTestCase {
         let scripts = await runner.scripts
         XCTAssertEqual(scripts.count, 1)
         XCTAssertTrue(scripts[0].contains(#"terminal id "term-42""#))
-        XCTAssertTrue(scripts[0].contains(#"send key "enter""#))
+        XCTAssertTrue(scripts[0].contains(#"send key "enter" to targetTerm"#))
     }
 
     func testSendEscapeTargetsTerminal() async throws {
@@ -24,7 +24,7 @@ final class GhosttyAppleScriptControllerTests: XCTestCase {
         let scripts = await runner.scripts
         XCTAssertEqual(scripts.count, 1)
         XCTAssertTrue(scripts[0].contains(#"terminal id "term-42""#))
-        XCTAssertTrue(scripts[0].contains(#"send key "escape""#))
+        XCTAssertTrue(scripts[0].contains(#"send key "escape" to targetTerm"#))
     }
 
     func testScrollUsesPreciseDelta() async throws {
@@ -36,7 +36,7 @@ final class GhosttyAppleScriptControllerTests: XCTestCase {
         let scripts = await runner.scripts
         XCTAssertEqual(scripts.count, 1)
         XCTAssertTrue(scripts[0].contains(#"terminal id "term-42""#))
-        XCTAssertTrue(scripts[0].contains("send mouse scroll x 0 y -12 precision true"))
+        XCTAssertTrue(scripts[0].contains("send mouse scroll x 0 y -12 precision true to targetTerm"))
     }
 
     func testCaptureParsesFocusedTerminalContext() async throws {
@@ -53,17 +53,26 @@ final class GhosttyAppleScriptControllerTests: XCTestCase {
                 displayTitle: "esp32"
             )
         )
+        let scripts = await runner.scripts
+        XCTAssertEqual(scripts.count, 1)
+        XCTAssertTrue(scripts[0].contains("return (id of targetTerm) & tab & (working directory of targetTerm) & tab & (name of targetTerm)"))
     }
 
-    func testCaptureRejectsIncompleteFocusedTerminalResponse() async throws {
-        let runner = RecordingAppleScriptRunner(result: "term-42\t/work/esp32")
-        let controller = GhosttyAppleScriptController(runner: runner)
+    func testCaptureRejectsMalformedFocusedTerminalResponse() async throws {
+        for output in [
+            "term-42\t/work/esp32",
+            "\t/path\ttitle",
+            "term-42\t/work/esp32\tesp32\textra",
+        ] {
+            let runner = RecordingAppleScriptRunner(result: output)
+            let controller = GhosttyAppleScriptController(runner: runner)
 
-        do {
-            _ = try await controller.captureFocusedTerminal()
-            XCTFail("Expected noFocusedTerminal")
-        } catch {
-            XCTAssertEqual(error as? GhosttyControllerError, .noFocusedTerminal)
+            do {
+                _ = try await controller.captureFocusedTerminal()
+                XCTFail("Expected noFocusedTerminal for \(output)")
+            } catch {
+                XCTAssertEqual(error as? GhosttyControllerError, .noFocusedTerminal)
+            }
         }
     }
 
@@ -71,22 +80,48 @@ final class GhosttyAppleScriptControllerTests: XCTestCase {
         let runner = RecordingAppleScriptRunner()
         let controller = GhosttyAppleScriptController(runner: runner)
 
-        do {
-            try await controller.sendKey(.enter, to: #"term-"42"#)
-            XCTFail("Expected invalidTerminalID")
-        } catch {
-            XCTAssertEqual(error as? GhosttyControllerError, .invalidTerminalID)
-        }
-
-        do {
-            try await controller.scroll(deltaY: -12, terminalTargetID: #"term\42"#)
-            XCTFail("Expected invalidTerminalID")
-        } catch {
-            XCTAssertEqual(error as? GhosttyControllerError, .invalidTerminalID)
+        for terminalID in [
+            "",
+            #"term-"42"#,
+            #"term\42"#,
+            "term\n42",
+            "term\r42",
+            "term\t42",
+        ] {
+            do {
+                try await controller.sendKey(.enter, to: terminalID)
+                XCTFail("Expected invalidTerminalID for \(terminalID.debugDescription)")
+            } catch {
+                XCTAssertEqual(error as? GhosttyControllerError, .invalidTerminalID)
+            }
         }
 
         let scripts = await runner.scripts
         XCTAssertTrue(scripts.isEmpty)
+    }
+
+    func testProcessRunnerReturnsTrimmedOutputFromOsascript() async throws {
+        let runner = ProcessAppleScriptRunner()
+
+        let output = try await runner.run(source: #"return "ok""#)
+
+        XCTAssertEqual(output, "ok")
+    }
+
+    func testProcessRunnerThrowsAppleScriptFailureWithStderr() async throws {
+        let runner = ProcessAppleScriptRunner()
+
+        do {
+            _ = try await runner.run(source: #"error "boom""#)
+            XCTFail("Expected appleScriptFailed")
+        } catch let error as GhosttyControllerError {
+            guard case let .appleScriptFailed(message) = error else {
+                return XCTFail("Expected appleScriptFailed, got \(error)")
+            }
+            XCTAssertTrue(message.contains("boom"))
+        } catch {
+            XCTFail("Expected GhosttyControllerError, got \(error)")
+        }
     }
 }
 

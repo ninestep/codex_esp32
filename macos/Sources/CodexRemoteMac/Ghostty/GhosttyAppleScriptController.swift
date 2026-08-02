@@ -1,4 +1,5 @@
 import CodexRemoteCore
+import Foundation
 
 public enum GhosttyControllerError: Error, Equatable, Sendable {
     case noFocusedTerminal
@@ -17,19 +18,13 @@ public struct GhosttyAppleScriptController: TerminalController, Sendable {
         let output = try await runner.run(source: """
         tell application "Ghostty"
             if frontmost is false then error "Ghostty is not frontmost"
-            tell front window
-                tell selected tab
-                    set focusedTerminal to focused terminal
-                    set terminalID to id of focusedTerminal
-                    set terminalCWD to working directory of focusedTerminal
-                    set terminalName to name
-                end tell
-            end tell
-            return terminalID & tab & terminalCWD & tab & terminalName
+            set targetTab to selected tab of front window
+            set targetTerm to focused terminal of targetTab
+            return (id of targetTerm) & tab & (working directory of targetTerm) & tab & (name of targetTerm)
         end tell
         """)
         let fields = output.components(separatedBy: "\t")
-        guard fields.count >= 3 else {
+        guard fields.count == 3, !fields[0].isEmpty else {
             throw GhosttyControllerError.noFocusedTerminal
         }
 
@@ -45,9 +40,8 @@ public struct GhosttyAppleScriptController: TerminalController, Sendable {
         _ = try await runner.run(source: """
         tell application "Ghostty"
             activate
-            tell terminal id "\(terminalID)"
-                focus
-            end tell
+            set targetTerm to terminal id "\(terminalID)"
+            focus targetTerm
         end tell
         """)
     }
@@ -56,9 +50,8 @@ public struct GhosttyAppleScriptController: TerminalController, Sendable {
         let terminalID = try validatedTerminalID(terminalTargetID)
         _ = try await runner.run(source: """
         tell application "Ghostty"
-            tell terminal id "\(terminalID)"
-                send mouse scroll x 0 y \(deltaY) precision true
-            end tell
+            set targetTerm to terminal id "\(terminalID)"
+            send mouse scroll x 0 y \(deltaY) precision true to targetTerm
         end tell
         """)
     }
@@ -67,15 +60,15 @@ public struct GhosttyAppleScriptController: TerminalController, Sendable {
         let terminalID = try validatedTerminalID(terminalTargetID)
         _ = try await runner.run(source: """
         tell application "Ghostty"
-            tell terminal id "\(terminalID)"
-                send key "\(key.rawValue)"
-            end tell
+            set targetTerm to terminal id "\(terminalID)"
+            send key "\(key.rawValue)" to targetTerm
         end tell
         """)
     }
 
     private func validatedTerminalID(_ terminalTargetID: String) throws -> String {
-        guard !terminalTargetID.contains("\""), !terminalTargetID.contains("\\") else {
+        let invalidCharacters = CharacterSet(charactersIn: "\"\\\n\r\t")
+        guard !terminalTargetID.isEmpty, terminalTargetID.rangeOfCharacter(from: invalidCharacters) == nil else {
             throw GhosttyControllerError.invalidTerminalID
         }
 
