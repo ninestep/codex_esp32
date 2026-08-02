@@ -14,5 +14,6 @@ let package = Package(
         .target(name: "CodexRemoteMac", dependencies: ["CodexRemoteCore"]),
         .executableTarget(name: "codex-remote-helper", dependencies: ["CodexRemoteCore", "CodexRemoteMac"]),
         .testTarget(name: "CodexRemoteCoreTests", dependencies: ["CodexRemoteCore"]),
+        .testTarget(name: "CodexRemoteMacTests", dependencies: ["CodexRemoteMac", "CodexRemoteCore"]),
     ]
 )
