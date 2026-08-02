@@ -6,13 +6,14 @@ import XCTest
 
 final class UnixSocketEventServerTests: XCTestCase {
     func testStartCreatesSocketWithOwnerOnlyModeAndStopRemovesIt() async throws {
-        let socketURL = try makeSocketURL()
+        let socketURL = try makeSocketFixture().socketURL
         let server = UnixSocketEventServer(socketURL: socketURL, handler: { _ in })
 
         try await server.start()
 
         XCTAssertTrue(FileManager.default.fileExists(atPath: socketURL.path))
         XCTAssertEqual(try socketMode(at: socketURL), 0o600)
+        XCTAssertEqual(try fileType(at: socketURL), S_IFSOCK)
 
         await server.stop()
         XCTAssertFalse(FileManager.default.fileExists(atPath: socketURL.path))
@@ -21,8 +22,33 @@ final class UnixSocketEventServerTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: socketURL.path))
     }
 
+    func testStopBeforeStartDoesNotRemoveExistingRegularFileAtSocketPath() async throws {
+        let socketURL = try makeSocketFixture().socketURL
+        let originalData = Data("keep me".utf8)
+        FileManager.default.createFile(atPath: socketURL.path, contents: originalData)
+        let server = UnixSocketEventServer(socketURL: socketURL, handler: { _ in })
+
+        await server.stop()
+
+        XCTAssertEqual(try Data(contentsOf: socketURL), originalData)
+    }
+
+    func testStopDoesNotRemoveReplacementFileWhenSocketPathWasExternallyReplaced() async throws {
+        let socketURL = try makeSocketFixture().socketURL
+        let replacementData = Data("replacement".utf8)
+        let server = UnixSocketEventServer(socketURL: socketURL, handler: { _ in })
+        try await server.start()
+
+        XCTAssertEqual(unlink(socketURL.path), 0)
+        FileManager.default.createFile(atPath: socketURL.path, contents: replacementData)
+
+        await server.stop()
+
+        XCTAssertEqual(try Data(contentsOf: socketURL), replacementData)
+    }
+
     func testLaunchRegisteredFrameCallsHandlerAndReturnsOKThenClosesConnection() async throws {
-        let socketURL = try makeSocketURL()
+        let socketURL = try makeSocketFixture().socketURL
         let recorder = EventRecorder()
         let server = UnixSocketEventServer(socketURL: socketURL) { event in
             await recorder.record(event)
@@ -48,7 +74,7 @@ final class UnixSocketEventServerTests: XCTestCase {
     }
 
     func testHandlerErrorReturnsFixedFailureCodeWithoutLeakingInternalError() async throws {
-        let socketURL = try makeSocketURL()
+        let socketURL = try makeSocketFixture().socketURL
         let server = UnixSocketEventServer(socketURL: socketURL) { _ in
             throw HandlerFailure.sensitiveToken
         }
@@ -71,7 +97,7 @@ final class UnixSocketEventServerTests: XCTestCase {
     }
 
     func testMalformedJSONReturnsInvalidEventAndDoesNotCallHandler() async throws {
-        let socketURL = try makeSocketURL()
+        let socketURL = try makeSocketFixture().socketURL
         let recorder = EventRecorder()
         let server = UnixSocketEventServer(socketURL: socketURL) { event in
             await recorder.record(event)
@@ -88,7 +114,7 @@ final class UnixSocketEventServerTests: XCTestCase {
     }
 
     func testOversizedFrameReturnsFrameTooLargeAndServerAcceptsNextValidConnection() async throws {
-        let socketURL = try makeSocketURL()
+        let socketURL = try makeSocketFixture().socketURL
         let recorder = EventRecorder()
         let server = UnixSocketEventServer(socketURL: socketURL) { event in
             await recorder.record(event)
@@ -117,8 +143,74 @@ final class UnixSocketEventServerTests: XCTestCase {
         await server.stop()
     }
 
+    func testIdleClientTimesOutWithoutCallingHandlerAndServerAcceptsNextValidConnection() async throws {
+        let socketURL = try makeSocketFixture().socketURL
+        let recorder = EventRecorder()
+        let server = UnixSocketEventServer(
+            socketURL: socketURL,
+            frameReadTimeout: .milliseconds(50)
+        ) { event in
+            await recorder.record(event)
+        }
+        try await server.start()
+
+        let idleClient = try openConnectedClient(to: socketURL)
+        defer {
+            close(idleClient)
+        }
+
+        let timeoutResult = try await readResponse(from: idleClient)
+        XCTAssertEqual(timeoutResult.response, SocketResponse(ok: false, error: "read_timeout"))
+        var recordedEvents = await recorder.events()
+        XCTAssertEqual(recordedEvents, [])
+
+        let event = LocalEvent.launchRegistered(
+            LaunchRegistration(
+                launcherInstanceID: "launch-timeout",
+                terminalTargetID: "terminal-timeout",
+                displayTitle: "ESP32 Timeout",
+                workingDirectoryLabel: "~/esp32-timeout"
+            )
+        )
+        let validResult = try await sendFrame(try LocalEventCodec().encode(event), to: socketURL)
+        XCTAssertEqual(validResult.response, SocketResponse(ok: true, error: nil))
+        recordedEvents = await recorder.events()
+        XCTAssertEqual(recordedEvents, [event])
+
+        await server.stop()
+    }
+
+    func testConnectionLimitReturnsServerBusyAndKeepsExistingServerUsable() async throws {
+        let socketURL = try makeSocketFixture().socketURL
+        let server = UnixSocketEventServer(
+            socketURL: socketURL,
+            maximumActiveConnections: 2,
+            frameReadTimeout: .seconds(5),
+            handler: { _ in }
+        )
+        try await server.start()
+
+        let firstIdleClient = try openConnectedClient(to: socketURL)
+        let secondIdleClient = try openConnectedClient(to: socketURL)
+        defer {
+            close(firstIdleClient)
+            close(secondIdleClient)
+        }
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        let busyClient = try openConnectedClient(to: socketURL)
+        defer {
+            close(busyClient)
+        }
+        let busyResult = try await readResponse(from: busyClient)
+
+        XCTAssertEqual(busyResult.response, SocketResponse(ok: false, error: "server_busy"))
+
+        await server.stop()
+    }
+
     func testStartThrowsExplicitLifecycleAndPathErrors() async throws {
-        let socketURL = try makeSocketURL()
+        let socketURL = try makeSocketFixture().socketURL
         let server = UnixSocketEventServer(socketURL: socketURL, handler: { _ in })
         try await server.start()
 
@@ -153,6 +245,25 @@ final class UnixSocketEventServerTests: XCTestCase {
         } catch {
             XCTAssertEqual(error as? UnixSocketEventServerError, .socketPathTooLong(longPathURL.path))
         }
+
+        FileManager.default.createFile(atPath: socketURL.path, contents: Data("existing".utf8))
+        let existingPathServer = UnixSocketEventServer(socketURL: socketURL, handler: { _ in })
+        do {
+            try await existingPathServer.start()
+            XCTFail("Expected socketPathAlreadyExists")
+        } catch {
+            XCTAssertEqual(error as? UnixSocketEventServerError, .socketPathAlreadyExists(socketURL.path))
+        }
+    }
+
+    private func makeSocketFixture() throws -> SocketFixture {
+        let directory = URL(fileURLWithPath: "/tmp", isDirectory: true)
+            .appendingPathComponent("ues-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: directory)
+        }
+        return SocketFixture(socketURL: directory.appendingPathComponent("e.sock"))
     }
 }
 
@@ -183,6 +294,10 @@ private struct SocketExchangeResult: Sendable {
     let connectionClosed: Bool
 }
 
+private struct SocketFixture {
+    let socketURL: URL
+}
+
 private enum TestTimeoutError: Error {
     case timedOut
 }
@@ -193,20 +308,21 @@ private enum POSIXClientError: Error, Sendable {
     case emptyResponse
 }
 
-private func makeSocketURL() throws -> URL {
-    let directory = URL(fileURLWithPath: "/tmp", isDirectory: true)
-        .appendingPathComponent("ues-\(UUID().uuidString)", isDirectory: true)
-    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
-    return directory.appendingPathComponent("e.sock")
+private func socketMode(at url: URL) throws -> Int {
+    try Int(fileStatus(at: url).st_mode & 0o777)
 }
 
-private func socketMode(at url: URL) throws -> Int {
+private func fileType(at url: URL) throws -> mode_t {
+    try fileStatus(at: url).st_mode & S_IFMT
+}
+
+private func fileStatus(at url: URL) throws -> stat {
     var status = stat()
-    let result = url.path.withCString { stat($0, &status) }
+    let result = url.path.withCString { lstat($0, &status) }
     if result != 0 {
-        throw POSIXClientError.systemCall("stat", errno)
+        throw POSIXClientError.systemCall("lstat", errno)
     }
-    return Int(status.st_mode & 0o777)
+    return status
 }
 
 private func sendFrame(_ frame: Data, to socketURL: URL) async throws -> SocketExchangeResult {
@@ -238,27 +354,29 @@ private func withTimeout<T: Sendable>(
     }
 }
 
-private func sendFrameSynchronously(_ frame: Data, to socketURL: URL) throws -> SocketExchangeResult {
-    let fileDescriptor = socket(AF_UNIX, SOCK_STREAM, 0)
-    guard fileDescriptor >= 0 else {
-        throw POSIXClientError.systemCall("socket", errno)
+private func readResponse(from fileDescriptor: Int32) async throws -> SocketExchangeResult {
+    try await withTimeout(seconds: 3) {
+        try await Task.detached {
+            let responseData = try readUntilEOF(from: fileDescriptor)
+            guard !responseData.isEmpty else {
+                throw POSIXClientError.emptyResponse
+            }
+            let response = try JSONDecoder().decode(SocketResponse.self, from: responseData)
+            return SocketExchangeResult(
+                response: response,
+                rawResponseString: String(decoding: responseData, as: UTF8.self),
+                connectionClosed: true
+            )
+        }.value
     }
+}
+
+private func sendFrameSynchronously(_ frame: Data, to socketURL: URL) throws -> SocketExchangeResult {
+    let fileDescriptor = try openConnectedClient(to: socketURL)
     defer {
         close(fileDescriptor)
     }
 
-    var timeout = timeval(tv_sec: 2, tv_usec: 0)
-    guard setsockopt(
-        fileDescriptor,
-        SOL_SOCKET,
-        SO_RCVTIMEO,
-        &timeout,
-        socklen_t(MemoryLayout<timeval>.size)
-    ) == 0 else {
-        throw POSIXClientError.systemCall("setsockopt", errno)
-    }
-
-    try connect(fileDescriptor: fileDescriptor, to: socketURL.path)
     try writeAll(frame, to: fileDescriptor)
     guard shutdown(fileDescriptor, SHUT_WR) == 0 else {
         throw POSIXClientError.systemCall("shutdown", errno)
@@ -274,6 +392,27 @@ private func sendFrameSynchronously(_ frame: Data, to socketURL: URL) throws -> 
         rawResponseString: String(decoding: responseData, as: UTF8.self),
         connectionClosed: true
     )
+}
+
+private func openConnectedClient(to socketURL: URL) throws -> Int32 {
+    let fileDescriptor = socket(AF_UNIX, SOCK_STREAM, 0)
+    guard fileDescriptor >= 0 else {
+        throw POSIXClientError.systemCall("socket", errno)
+    }
+
+    var timeout = timeval(tv_sec: 2, tv_usec: 0)
+    guard setsockopt(
+        fileDescriptor,
+        SOL_SOCKET,
+        SO_RCVTIMEO,
+        &timeout,
+        socklen_t(MemoryLayout<timeval>.size)
+    ) == 0 else {
+        throw POSIXClientError.systemCall("setsockopt", errno)
+    }
+
+    try connect(fileDescriptor: fileDescriptor, to: socketURL.path)
+    return fileDescriptor
 }
 
 private func connect(fileDescriptor: Int32, to path: String) throws {

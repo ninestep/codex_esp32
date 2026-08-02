@@ -7,24 +7,46 @@ public enum UnixSocketEventServerError: Error, Equatable, Sendable {
     case alreadyStarted
     case parentDirectoryMissing(String)
     case socketPathTooLong(String)
+    case socketPathAlreadyExists(String)
     case listenerFailed(String)
     case socketPermissionFailed(Int32)
+    case socketIdentityUnavailable(Int32)
+    case socketPathNotSocket(String)
 }
 
 public actor UnixSocketEventServer {
     public typealias Handler = @Sendable (LocalEvent) async throws -> Void
 
     private let socketURL: URL
+    private let maximumActiveConnections: Int
+    private let frameReadTimeout: Duration
     private let handler: Handler
     private let queue = DispatchQueue(label: "codex-remote.unix-socket-event-server")
     private let codec = LocalEventCodec()
 
     private var listener: NWListener?
-    private var connections: [ObjectIdentifier: NWConnection] = [:]
+    private var connections: [ObjectIdentifier: ConnectionState] = [:]
+    private var socketIdentity: SocketIdentity?
     private var startContinuation: CheckedContinuation<Void, Error>?
 
     public init(socketURL: URL, handler: @escaping Handler) {
+        self.init(
+            socketURL: socketURL,
+            maximumActiveConnections: 16,
+            frameReadTimeout: .seconds(5),
+            handler: handler
+        )
+    }
+
+    init(
+        socketURL: URL,
+        maximumActiveConnections: Int = 16,
+        frameReadTimeout: Duration = .seconds(5),
+        handler: @escaping Handler
+    ) {
         self.socketURL = socketURL
+        self.maximumActiveConnections = maximumActiveConnections
+        self.frameReadTimeout = frameReadTimeout
         self.handler = handler
     }
 
@@ -76,12 +98,13 @@ public actor UnixSocketEventServer {
         listener?.cancel()
         listener = nil
 
-        for connection in connections.values {
-            connection.cancel()
+        for state in connections.values {
+            state.timeoutTask?.cancel()
+            state.connection.cancel()
         }
         connections.removeAll()
 
-        unlink(socketURL.path)
+        unlinkSocketIfOwned()
     }
 
     private func validateSocketPath() throws {
@@ -94,6 +117,15 @@ public actor UnixSocketEventServer {
         guard socketURL.path.utf8.count < Self.maximumUnixSocketPathBytes else {
             throw UnixSocketEventServerError.socketPathTooLong(socketURL.path)
         }
+
+        var status = stat()
+        let result = socketURL.path.withCString { lstat($0, &status) }
+        if result == 0 {
+            throw UnixSocketEventServerError.socketPathAlreadyExists(socketURL.path)
+        }
+        guard errno == ENOENT else {
+            throw UnixSocketEventServerError.socketIdentityUnavailable(errno)
+        }
     }
 
     private func handleListenerState(_ state: NWListener.State) {
@@ -101,6 +133,7 @@ public actor UnixSocketEventServer {
         case .ready:
             do {
                 try chmodSocket()
+                socketIdentity = try currentSocketIdentity()
                 resumeStart()
             } catch {
                 listener?.cancel()
@@ -125,6 +158,30 @@ public actor UnixSocketEventServer {
         }
     }
 
+    private func currentSocketIdentity() throws -> SocketIdentity {
+        var status = stat()
+        guard socketURL.path.withCString({ lstat($0, &status) }) == 0 else {
+            throw UnixSocketEventServerError.socketIdentityUnavailable(errno)
+        }
+        guard status.st_mode & S_IFMT == S_IFSOCK else {
+            throw UnixSocketEventServerError.socketPathNotSocket(socketURL.path)
+        }
+        return SocketIdentity(device: status.st_dev, inode: status.st_ino)
+    }
+
+    private func unlinkSocketIfOwned() {
+        defer {
+            socketIdentity = nil
+        }
+        guard let socketIdentity else {
+            return
+        }
+        guard let currentIdentity = try? currentSocketIdentity(), currentIdentity == socketIdentity else {
+            return
+        }
+        unlink(socketURL.path)
+    }
+
     private func resumeStart(throwing error: Error? = nil) {
         guard let continuation = startContinuation else {
             return
@@ -138,8 +195,23 @@ public actor UnixSocketEventServer {
     }
 
     private func accept(_ connection: NWConnection) {
+        guard connections.count < maximumActiveConnections else {
+            connection.start(queue: queue)
+            sendResponse(.serverBusy, on: connection)
+            return
+        }
+
         let identifier = ObjectIdentifier(connection)
-        connections[identifier] = connection
+        connections[identifier] = ConnectionState(connection: connection, timeoutTask: nil)
+        let timeoutTask = Task {
+            do {
+                try await Task.sleep(for: frameReadTimeout)
+            } catch {
+                return
+            }
+            self.handleReadTimeout(for: connection)
+        }
+        connections[identifier]?.timeoutTask = timeoutTask
         connection.stateUpdateHandler = { state in
             switch state {
             case .failed, .cancelled:
@@ -182,6 +254,7 @@ public actor UnixSocketEventServer {
         connection: NWConnection
     ) async {
         if error != nil {
+            connection.cancel()
             removeConnection(connection)
             return
         }
@@ -228,6 +301,7 @@ public actor UnixSocketEventServer {
     }
 
     private func sendResponse(_ response: SocketResponse, on connection: NWConnection) {
+        cancelReadTimeout(for: connection)
         connection.send(
             content: response.data,
             contentContext: .defaultMessage,
@@ -241,8 +315,26 @@ public actor UnixSocketEventServer {
         )
     }
 
+    private func handleReadTimeout(for connection: NWConnection) {
+        guard connections[ObjectIdentifier(connection)] != nil else {
+            return
+        }
+        sendResponse(.readTimeout, on: connection)
+    }
+
+    private func cancelReadTimeout(for connection: NWConnection) {
+        let identifier = ObjectIdentifier(connection)
+        guard var state = connections[identifier] else {
+            return
+        }
+        state.timeoutTask?.cancel()
+        state.timeoutTask = nil
+        connections[identifier] = state
+    }
+
     private func removeConnection(_ connection: NWConnection) {
-        connections.removeValue(forKey: ObjectIdentifier(connection))
+        let state = connections.removeValue(forKey: ObjectIdentifier(connection))
+        state?.timeoutTask?.cancel()
     }
 
     private static var maximumUnixSocketPathBytes: Int {
@@ -250,11 +342,23 @@ public actor UnixSocketEventServer {
     }
 }
 
+private struct ConnectionState {
+    let connection: NWConnection
+    var timeoutTask: Task<Void, Never>?
+}
+
+private struct SocketIdentity: Equatable, Sendable {
+    let device: dev_t
+    let inode: ino_t
+}
+
 private enum SocketResponse {
     case ok
     case invalidEvent
     case frameTooLarge
     case handlerFailed
+    case serverBusy
+    case readTimeout
 
     var data: Data {
         switch self {
@@ -266,6 +370,10 @@ private enum SocketResponse {
             failureData(code: "frame_too_large")
         case .handlerFailed:
             failureData(code: "handler_failed")
+        case .serverBusy:
+            failureData(code: "server_busy")
+        case .readTimeout:
+            failureData(code: "read_timeout")
         }
     }
 
