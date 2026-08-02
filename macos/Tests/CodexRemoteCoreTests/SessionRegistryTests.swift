@@ -126,6 +126,86 @@ final class SessionRegistryTests: XCTestCase {
         XCTAssertEqual(updated.updatedAt, fixedDate)
     }
 
+    func testConditionalApplyUpdatesOnlyWhenCurrentStateMatchesExpected() async throws {
+        let registry = SessionRegistry(idGenerator: { "remote-fixed" })
+        try await registry.registerLaunch(
+            launcherInstanceID: "launch-1",
+            terminalTargetID: "term-7",
+            displayTitle: "ESP32",
+            workingDirectoryLabel: "~/esp32"
+        )
+        _ = try await registry.bindProviderSession(
+            launcherInstanceID: "launch-1",
+            providerSessionID: "codex-99"
+        )
+        _ = try await registry.apply(
+            SessionStateResult(
+                state: .completeUnread,
+                statusDetail: "任务完成",
+                unread: true,
+                updatedAt: fixedDate
+            ),
+            providerSessionID: "codex-99"
+        )
+        let result = SessionStateResult(
+            state: .idle,
+            statusDetail: "",
+            unread: false,
+            updatedAt: fixedDate.addingTimeInterval(1)
+        )
+
+        let updated = try await registry.apply(
+            result,
+            providerSessionID: "codex-99",
+            ifCurrentState: .completeUnread
+        )
+
+        XCTAssertEqual(updated.state, .idle)
+        XCTAssertEqual(updated.statusDetail, "")
+        XCTAssertFalse(updated.unread)
+        XCTAssertEqual(updated.updatedAt, fixedDate.addingTimeInterval(1))
+    }
+
+    func testConditionalApplyReturnsCurrentSessionWithoutMetadataChangesWhenStateDiffers() async throws {
+        let registry = SessionRegistry(idGenerator: { "remote-fixed" })
+        try await registry.registerLaunch(
+            launcherInstanceID: "launch-1",
+            terminalTargetID: "term-7",
+            displayTitle: "ESP32",
+            workingDirectoryLabel: "~/esp32"
+        )
+        _ = try await registry.bindProviderSession(
+            launcherInstanceID: "launch-1",
+            providerSessionID: "codex-99"
+        )
+        let workingDate = fixedDate.addingTimeInterval(10)
+        let current = try await registry.apply(
+            SessionStateResult(
+                state: .working,
+                statusDetail: "Codex 正在处理",
+                unread: false,
+                updatedAt: workingDate
+            ),
+            providerSessionID: "codex-99"
+        )
+        let staleResult = SessionStateResult(
+            state: .idle,
+            statusDetail: "",
+            unread: false,
+            updatedAt: fixedDate.addingTimeInterval(20)
+        )
+
+        let unchanged = try await registry.apply(
+            staleResult,
+            providerSessionID: "codex-99",
+            ifCurrentState: .completeUnread
+        )
+
+        XCTAssertEqual(unchanged, current)
+        let stored = try await registry.session(providerSessionID: "codex-99")
+        XCTAssertEqual(stored, current)
+    }
+
     func testBindProviderRejectsUnknownLauncherAndDuplicateProvider() async throws {
         let registry = SessionRegistry(idGenerator: IDGenerator(["remote-1", "remote-2"]).next)
 

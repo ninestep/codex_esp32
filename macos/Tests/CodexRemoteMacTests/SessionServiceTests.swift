@@ -85,6 +85,44 @@ final class SessionServiceTests: XCTestCase {
         XCTAssertFalse(updated?.unread ?? true)
     }
 
+    func testPermissionRequestPrefersCurrentMessageWhenAssistantMessageAlsoExists() async throws {
+        let service = SessionService(controller: RecordingTerminalController(), idGenerator: { "remote-1" })
+        _ = try await service.registerFocusedLaunch(launcherInstanceID: "launch-1")
+        _ = try await service.receiveHook(sessionStart("codex-99", launcherInstanceID: "launch-1"))
+
+        let updated = try await service.receiveHook(
+            HookPayload(
+                hookEventName: "PermissionRequest",
+                sessionID: "codex-99",
+                launcherInstanceID: nil,
+                message: "当前权限请求",
+                lastAssistantMessage: "上一条回复"
+            )
+        )
+
+        XCTAssertEqual(updated?.state, .requiresInput)
+        XCTAssertEqual(updated?.statusDetail, "当前权限请求")
+    }
+
+    func testStopPrefersLastAssistantMessageWhenMessageAlsoExists() async throws {
+        let service = SessionService(controller: RecordingTerminalController(), idGenerator: { "remote-1" })
+        _ = try await service.registerFocusedLaunch(launcherInstanceID: "launch-1")
+        _ = try await service.receiveHook(sessionStart("codex-99", launcherInstanceID: "launch-1"))
+
+        let updated = try await service.receiveHook(
+            HookPayload(
+                hookEventName: "Stop",
+                sessionID: "codex-99",
+                launcherInstanceID: nil,
+                message: "当前 hook message",
+                lastAssistantMessage: "最终回复"
+            )
+        )
+
+        XCTAssertEqual(updated?.state, .completeUnread)
+        XCTAssertEqual(updated?.statusDetail, "最终回复")
+    }
+
     func testUnknownProviderPromptAndUnknownLauncherStartThrowExactRegistryErrors() async throws {
         let service = SessionService(controller: RecordingTerminalController(), idGenerator: { "remote-1" })
 
@@ -146,6 +184,53 @@ final class SessionServiceTests: XCTestCase {
         XCTAssertEqual(selected.state, .requiresInput)
         XCTAssertEqual(selected.statusDetail, "允许执行？")
         XCTAssertFalse(selected.unread)
+    }
+
+    func testSelectCompleteUnreadDoesNotOverwriteNewWorkingStateWhenFocusSuspends() async throws {
+        let controller = BlockingFocusTerminalController()
+        let service = SessionService(controller: controller, idGenerator: { "remote-1" })
+        _ = try await service.registerFocusedLaunch(launcherInstanceID: "launch-1")
+        _ = try await service.receiveHook(sessionStart("codex-99", launcherInstanceID: "launch-1"))
+        _ = try await service.receiveHook(stop("codex-99", assistantMessage: "任务完成"))
+
+        let selectTask = Task {
+            try await service.selectSession(remoteSessionID: "remote-1")
+        }
+        await controller.waitForBlockedFocus()
+
+        _ = try await service.receiveHook(prompt("codex-99"))
+        await controller.releaseFocus()
+        let selected = try await selectTask.value
+        let stored = try await service.session(providerSessionID: "codex-99")
+
+        XCTAssertEqual(selected.state, .working)
+        XCTAssertEqual(selected.statusDetail, "Codex 正在处理")
+        XCTAssertFalse(selected.unread)
+        XCTAssertEqual(stored.state, .working)
+        XCTAssertEqual(stored.statusDetail, "Codex 正在处理")
+        XCTAssertFalse(stored.unread)
+    }
+
+    func testUnsupportedHookDoesNotChangeExistingSession() async throws {
+        let service = SessionService(controller: RecordingTerminalController(), idGenerator: { "remote-1" })
+        _ = try await service.registerFocusedLaunch(launcherInstanceID: "launch-1")
+        _ = try await service.receiveHook(sessionStart("codex-99", launcherInstanceID: "launch-1"))
+        _ = try await service.receiveHook(permission("codex-99", message: "允许执行？"))
+        let before = try await service.session(providerSessionID: "codex-99")
+
+        let result = try await service.receiveHook(
+            HookPayload(
+                hookEventName: "UnknownHook",
+                sessionID: "codex-99",
+                launcherInstanceID: nil,
+                message: "ignored",
+                lastAssistantMessage: "ignored"
+            )
+        )
+        let after = try await service.session(providerSessionID: "codex-99")
+
+        XCTAssertNil(result)
+        XCTAssertEqual(after, before)
     }
 
     func testUnboundRegisteredLaunchRejectsSelectAndSendKeyWithoutDeviceOperations() async throws {
@@ -273,4 +358,52 @@ private actor RecordingTerminalController: TerminalController {
     func sendKey(_ key: TerminalKey, to terminalTargetID: String) async throws {
         events.append(.key(key, terminalTargetID))
     }
+}
+
+private actor BlockingFocusTerminalController: TerminalController {
+    private let context: TerminalContext
+    private var focusContinuation: CheckedContinuation<Void, Never>?
+    private var focusStartedContinuation: CheckedContinuation<Void, Never>?
+    private var focusIsBlocked = false
+
+    init(
+        context: TerminalContext = TerminalContext(
+            terminalTargetID: "term-7",
+            workingDirectory: "/Users/wj/data/mcp/esp32",
+            displayTitle: "ESP32"
+        )
+    ) {
+        self.context = context
+    }
+
+    func waitForBlockedFocus() async {
+        if focusIsBlocked {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            focusStartedContinuation = continuation
+        }
+    }
+
+    func releaseFocus() {
+        focusContinuation?.resume()
+        focusContinuation = nil
+    }
+
+    func captureFocusedTerminal() async throws -> TerminalContext {
+        context
+    }
+
+    func focus(terminalTargetID: String) async throws {
+        await withCheckedContinuation { continuation in
+            focusContinuation = continuation
+            focusIsBlocked = true
+            focusStartedContinuation?.resume()
+            focusStartedContinuation = nil
+        }
+    }
+
+    func scroll(deltaY: Int, terminalTargetID: String) async throws {}
+
+    func sendKey(_ key: TerminalKey, to terminalTargetID: String) async throws {}
 }

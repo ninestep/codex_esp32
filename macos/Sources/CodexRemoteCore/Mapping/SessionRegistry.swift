@@ -99,6 +99,28 @@ public actor SessionRegistry {
         return session
     }
 
+    public func apply(
+        _ result: SessionStateResult,
+        providerSessionID: String,
+        ifCurrentState expected: RemoteSessionState
+    ) throws -> RemoteSession {
+        guard let remoteSessionID = remoteIDByProvider[providerSessionID],
+              var session = sessionsByRemoteID[remoteSessionID] else {
+            throw SessionRegistryError.unknownRemoteSession(providerSessionID)
+        }
+
+        guard session.state == expected else {
+            return session
+        }
+
+        session.state = result.state
+        session.statusDetail = result.statusDetail
+        session.unread = result.unread
+        session.updatedAt = result.updatedAt
+        sessionsByRemoteID[remoteSessionID] = session
+        return session
+    }
+
     public func activeSessions(limit: Int = 8) -> [RemoteSession] {
         guard limit > 0 else {
             return []

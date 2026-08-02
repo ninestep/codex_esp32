@@ -54,7 +54,7 @@ public actor SessionService {
         case "PermissionRequest":
             let session = try await registry.session(providerSessionID: payload.sessionID)
             return try await apply(
-                .permissionRequested(detail(from: payload)),
+                .permissionRequested(permissionDetail(from: payload)),
                 to: session
             )
 
@@ -90,7 +90,11 @@ public actor SessionService {
         }
 
         let result = reducer.reduce(.detailViewed, from: session.state)
-        return try await registry.apply(result, providerSessionID: providerSessionID)
+        return try await registry.apply(
+            result,
+            providerSessionID: providerSessionID,
+            ifCurrentState: .completeUnread
+        )
     }
 
     public func sendKey(_ key: TerminalKey, remoteSessionID: String) async throws {
@@ -118,7 +122,7 @@ public actor SessionService {
     }
 
     private func stopEvent(from payload: HookPayload) -> SessionEvent {
-        switch classifier.classify(detail(from: payload)) {
+        switch classifier.classify(stopDetail(from: payload)) {
         case .blocking(let detail):
             return .stopped(.blockingInput(detail))
         case .normal(let detail):
@@ -126,7 +130,11 @@ public actor SessionService {
         }
     }
 
-    private func detail(from payload: HookPayload) -> String {
+    private func permissionDetail(from payload: HookPayload) -> String {
+        payload.message ?? payload.lastAssistantMessage ?? ""
+    }
+
+    private func stopDetail(from payload: HookPayload) -> String {
         payload.lastAssistantMessage ?? payload.message ?? ""
     }
 
