@@ -39,8 +39,10 @@ private func runServe(arguments: [String]) async {
 
     let service = SessionService(controller: GhosttyAppleScriptController())
     let dispatcher = SessionIPCDispatcher(service: service)
+    let startupGate = IPCStartupGate()
     let server = UnixSocketIPCServer(socketURL: socketURL) { request in
-        await dispatcher.handle(request)
+        await startupGate.waitUntilReady()
+        return await dispatcher.handle(request)
     }
 
     do {
@@ -55,6 +57,7 @@ private func runServe(arguments: [String]) async {
     } catch {
         write("codex-remote-helper: pending hook drain unavailable\n", to: .standardError)
     }
+    await startupGate.open()
 
     await waitForTerminationSignal()
     await server.stop()
