@@ -217,6 +217,64 @@ final class SessionRegistryTests: XCTestCase {
         XCTAssertEqual(sessions.map(\.remoteSessionID), ["remote-second"])
     }
 
+    func testActiveSessionsSortsByStatePriorityThenUpdatedAtThenRemoteID() async throws {
+        let fixtures: [(String, RemoteSessionState, Date)] = [
+            ("remote-idle", .idle, fixedDate.addingTimeInterval(100)),
+            ("remote-requires", .requiresInput, fixedDate),
+            ("remote-b", .working, fixedDate.addingTimeInterval(50)),
+            ("remote-a", .working, fixedDate.addingTimeInterval(50)),
+            ("remote-error", .error, fixedDate.addingTimeInterval(1)),
+        ]
+        let registry = SessionRegistry(idGenerator: IDGenerator(fixtures.map { $0.0 }).next)
+
+        for (index, fixture) in fixtures.enumerated() {
+            let launcherID = "launch-\(index)"
+            let providerID = "codex-\(index)"
+            try await registry.registerLaunch(
+                launcherInstanceID: launcherID,
+                terminalTargetID: "term-\(index)",
+                displayTitle: fixture.0,
+                workingDirectoryLabel: "~/\(fixture.0)"
+            )
+            _ = try await registry.bindProviderSession(
+                launcherInstanceID: launcherID,
+                providerSessionID: providerID
+            )
+            _ = try await registry.apply(
+                SessionStateResult(
+                    state: fixture.1,
+                    statusDetail: fixture.0,
+                    unread: false,
+                    updatedAt: fixture.2
+                ),
+                providerSessionID: providerID
+            )
+        }
+
+        let sessions = await registry.activeSessions(limit: fixtures.count)
+
+        XCTAssertEqual(
+            sessions.map(\.remoteSessionID),
+            ["remote-error", "remote-requires", "remote-a", "remote-b", "remote-idle"]
+        )
+    }
+
+    func testActiveSessionsReturnsEmptyForNonPositiveLimit() async throws {
+        let registry = SessionRegistry(idGenerator: { "remote-fixed" })
+        try await registry.registerLaunch(
+            launcherInstanceID: "launch-1",
+            terminalTargetID: "term-7",
+            displayTitle: "ESP32",
+            workingDirectoryLabel: "~/esp32"
+        )
+
+        let zeroLimitSessions = await registry.activeSessions(limit: 0)
+        let negativeLimitSessions = await registry.activeSessions(limit: -1)
+
+        XCTAssertEqual(zeroLimitSessions, [])
+        XCTAssertEqual(negativeLimitSessions, [])
+    }
+
     func testActiveSessionsDefaultLimitReturnsEightNewestSessions() async throws {
         let ids = (1...9).map { "remote-\($0)" }
         let registry = SessionRegistry(idGenerator: IDGenerator(ids).next)

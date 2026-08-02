@@ -100,10 +100,41 @@ public actor SessionRegistry {
     }
 
     public func activeSessions(limit: Int = 8) -> [RemoteSession] {
-        Array(
+        guard limit > 0 else {
+            return []
+        }
+
+        return Array(
             sessionsByRemoteID.values
-                .sorted { $0.updatedAt > $1.updatedAt }
+                .sorted(by: Self.compareActiveSessions)
                 .prefix(limit)
         )
+    }
+
+    private static func compareActiveSessions(_ lhs: RemoteSession, _ rhs: RemoteSession) -> Bool {
+        let lhsPriority = priority(for: lhs.state)
+        let rhsPriority = priority(for: rhs.state)
+        if lhsPriority != rhsPriority {
+            return lhsPriority < rhsPriority
+        }
+        if lhs.updatedAt != rhs.updatedAt {
+            return lhs.updatedAt > rhs.updatedAt
+        }
+        return lhs.remoteSessionID < rhs.remoteSessionID
+    }
+
+    private static func priority(for state: RemoteSessionState) -> Int {
+        switch state {
+        case .requiresInput, .error:
+            0
+        case .working:
+            1
+        case .completeUnread:
+            2
+        case .idle:
+            3
+        case .offline:
+            4
+        }
     }
 }
