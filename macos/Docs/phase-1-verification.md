@@ -4,6 +4,37 @@ Date: 2026-08-03
 
 Scope: controlled Task10 live smoke plus Task11 fresh automated verification for the macOS session-control worktree. This report records observed evidence only. It does not claim provider/session hook lifecycle success where the live action was authorization-gated.
 
+## Phase1 final review fixes
+
+Final-review remediation was applied on 2026-08-03 for one High and one Medium finding:
+
+- High: `GhosttyAppleScriptController` now emits `tell application id "com.mitchellh.ghostty"` for focused-terminal capture, focus, scroll, and key send scripts. Automated tests assert all four operation classes use the bundle id and do not contain `tell application "Ghostty"`. This is a static/code-path fix; the Task10 GUI live evidence already proved bundle id succeeds and app-name lookup fails, and this remediation did not rerun GUI live smoke.
+- Medium: hook delivery now has a bounded local queue at the socket sibling paths `pending-hooks.jsonl` and `pending-hooks.lock`. Hook commands still return 65 for raw hook parse errors and 69 for explicit daemon negative responses. Only local IPC transport failures (`connect`, `send`, `receive`, empty response, or timeout) attempt enqueue; enqueue success exits 0 with the fixed warning `codex-remote-helper: hook queued`, and enqueue failure exits 69.
+- Queue persistence stores only normalized `HookPayload` fields through the versioned LocalIPC `.hook` newline JSON frame. `message` and `lastAssistantMessage` are truncated to 1,024 Unicode characters each; no raw hook JSON or transcript is persisted. Queue bounds are 64 events, 256 KiB total file size, and 64 KiB per frame, dropping oldest events first.
+- Queue files and lock files are opened with `O_CREAT|O_RDWR|O_NOFOLLOW` and owner-only `0600` validation; the socket parent still uses `SocketParentPreparer` strict `0700` owner checks. Enqueue and drain serialize through `flock`. Drain runs after `serve` starts the IPC server, derives queue paths from the same socket, and calls `SessionIPCDispatcher` directly while holding the queue lock so only confirmed `.ok` events are removed. The first `.error` and all later events are retained. The queue file is not deleted on service exit.
+- Known diagnostic limitation: daemon outage during `register-launch` is still not queued. Delaying `register-launch` would require capturing the focused terminal at the original launch moment, so this remains a visible failure instead of a false success.
+
+Focused remediation tests:
+
+| Check | Command | Exit | Evidence |
+| --- | --- | ---: | --- |
+| Ghostty bundle id plus hook queue behavior | `cd macos && swift test --filter 'GhosttyAppleScriptControllerTests\|HookEventQueueTests'` | 0 | 20 tests passed after the RED/GREEN cycle; Ghostty tests covered capture, focus, scroll, and sendKey scripts, and queue tests covered unavailable transport queueing, negative response not queued, enqueue failure, truncation/no raw fields, 65th drops oldest, file modes and symlink rejection, drain success/failure retention, and concurrent enqueue. |
+| Helper command and queue regression | `cd macos && swift test --filter 'HelperCommandTests\|HookEventQueueTests'` | 0 | 39 tests passed, covering raw hook parse exit 65, explicit daemon errors exit 69, non-hook command behavior, IPC server/client behavior, and the new hook queue semantics. |
+
+Final remediation fresh verification:
+
+| Check | Command | Exit | Evidence |
+| --- | --- | ---: | --- |
+| Full Swift test suite | `cd macos && swift test --parallel` | 0 | Build completed; XCTest enumerated `[1/107]` through `[107/107]` with no failures. Swift Testing compatibility summary printed `Test run with 0 tests in 0 suites passed`. |
+| Swift build | `cd macos && swift build` | 0 | `Build complete! (0.17s)`. |
+| Codex shim script | `zsh macos/Tests/Scripts/codex-shim.zsh` | 0 | No stdout/stderr; script completed successfully. Existing script still asserts missing helper for hook exits 69, preserving the distinction between installation errors and daemon/App unavailability. |
+| Core platform boundary | `rg -n 'import (AppKit\|SwiftUI\|CoreBluetooth\|CoreAudio)\|Ghostty\|AppleScript' macos/Sources/CodexRemoteCore` | 1 | Clean: no matches. |
+| Ghostty app-name production scan | `rg -n 'tell application "Ghostty"' macos/Sources` | 1 | Clean: no production AppleScript still targets Ghostty by app name. A broader `macos/Sources macos/Tests` scan only matched the negative test assertion. |
+| Ghostty bundle id scan | `rg -n 'tell application id "com\\.mitchellh\\.ghostty"' macos/Sources/CodexRemoteMac/Ghostty macos/Tests/CodexRemoteMacTests/GhosttyAppleScriptControllerTests.swift` | 0 | Four production scripts use the bundle id, and tests assert the same bundle id. |
+| Prompt/transcript surface | `rg -n 'last_assistant_message\|prompt\|transcript' macos/Sources macos/Tests` | 0 | Reviewed all matches. Runtime code only maps official hook fields; queue tests include a `transcript` fixture to prove it is not persisted. |
+| Common secret strings | `rg -n '(Bearer \|api[_-]?key\|BEGIN .*PRIVATE KEY\|password\\s*[=:])' macos docs/superpowers -g '!macos/Docs/phase-1-verification.md'` | 1 | Clean: no matches. |
+| Diff whitespace check | `git diff --check` | 0 | Clean. |
+
 ## Environment
 
 | Check | Command | Exit | Evidence |

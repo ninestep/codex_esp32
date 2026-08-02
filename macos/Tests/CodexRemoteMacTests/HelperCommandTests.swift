@@ -544,15 +544,19 @@ private actor IPCRequestRecorder {
 
 private actor RecordingIPCClient: LocalIPCClienting {
     private(set) var calls: [IPCClientCall] = []
-    private let response: LocalIPCResponse
+    private let result: Result<LocalIPCResponse, Error>
 
     init(response: LocalIPCResponse) {
-        self.response = response
+        self.result = .success(response)
+    }
+
+    init(error: Error) {
+        self.result = .failure(error)
     }
 
     func send(_ request: LocalIPCRequest, to socketURL: URL) async throws -> LocalIPCResponse {
         calls.append(IPCClientCall(socketPath: socketURL.path, request: request))
-        return response
+        return try result.get()
     }
 
     func recordedCalls() -> [IPCClientCall] {

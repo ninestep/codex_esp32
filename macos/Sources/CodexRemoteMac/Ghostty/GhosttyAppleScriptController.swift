@@ -16,7 +16,7 @@ public struct GhosttyAppleScriptController: TerminalController, Sendable {
 
     public func captureFocusedTerminal() async throws -> TerminalContext {
         let output = try await runner.run(source: """
-        tell application "Ghostty"
+        tell application id "com.mitchellh.ghostty"
             if frontmost is false then error "Ghostty is not frontmost"
             set targetTab to selected tab of front window
             set targetTerm to focused terminal of targetTab
@@ -38,7 +38,7 @@ public struct GhosttyAppleScriptController: TerminalController, Sendable {
     public func focus(terminalTargetID: String) async throws {
         let terminalID = try validatedTerminalID(terminalTargetID)
         _ = try await runner.run(source: """
-        tell application "Ghostty"
+        tell application id "com.mitchellh.ghostty"
             activate
             set targetTerm to terminal id "\(terminalID)"
             focus targetTerm
@@ -49,7 +49,7 @@ public struct GhosttyAppleScriptController: TerminalController, Sendable {
     public func scroll(deltaY: Int, terminalTargetID: String) async throws {
         let terminalID = try validatedTerminalID(terminalTargetID)
         _ = try await runner.run(source: """
-        tell application "Ghostty"
+        tell application id "com.mitchellh.ghostty"
             set targetTerm to terminal id "\(terminalID)"
             send mouse scroll x 0 y \(deltaY) precision true to targetTerm
         end tell
@@ -59,7 +59,7 @@ public struct GhosttyAppleScriptController: TerminalController, Sendable {
     public func sendKey(_ key: TerminalKey, to terminalTargetID: String) async throws {
         let terminalID = try validatedTerminalID(terminalTargetID)
         _ = try await runner.run(source: """
-        tell application "Ghostty"
+        tell application id "com.mitchellh.ghostty"
             set targetTerm to terminal id "\(terminalID)"
             send key "\(key.rawValue)" to targetTerm
         end tell

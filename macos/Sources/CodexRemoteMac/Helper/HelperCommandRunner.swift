@@ -15,9 +15,11 @@ public struct HelperCommandResult: Equatable, Sendable {
 
 public struct HelperCommandRunner: Sendable {
     private let socketClient: any LocalIPCClienting
+    private let hookQueue: any HookEventQueueing
 
-    public init(socketClient: any LocalIPCClienting = LocalIPCClient()) {
+    public init(socketClient: any LocalIPCClienting = LocalIPCClient(), hookQueue: any HookEventQueueing = HookEventQueue()) {
         self.socketClient = socketClient
+        self.hookQueue = hookQueue
     }
 
     public func run(arguments: [String], stdin: Data, environment: [String: String]) async -> HelperCommandResult {
@@ -71,7 +73,23 @@ public struct HelperCommandRunner: Sendable {
         } catch {
             return HelperCommandResult(exitCode: 65, stderr: "codex-remote-helper: malformed hook: \(hookMappingDiagnostic(error))\n")
         }
-        return await sendExpectingOK(.hook(payload), to: socketURL)
+        do {
+            let response = try await socketClient.send(.hook(payload), to: socketURL)
+            guard response == .ok else {
+                return daemonFailure(response)
+            }
+            return HelperCommandResult(exitCode: 0)
+        } catch {
+            guard isQueueableHookTransportError(error) else {
+                return daemonUnavailable(error)
+            }
+            do {
+                try await hookQueue.enqueue(payload, forSocketAt: socketURL)
+                return HelperCommandResult(exitCode: 0, stderr: "codex-remote-helper: hook queued\n")
+            } catch {
+                return daemonUnavailable(error)
+            }
+        }
     }
 
     private func list(arguments: [String]) async -> HelperCommandResult {
@@ -163,6 +181,16 @@ public struct HelperCommandRunner: Sendable {
 
     private func daemonUnavailable(_ error: Error) -> HelperCommandResult {
         HelperCommandResult(exitCode: 69, stderr: "codex-remote-helper: daemon unavailable\n")
+    }
+
+    private func isQueueableHookTransportError(_ error: Error) -> Bool {
+        guard let clientError = error as? LocalIPCClientError else {
+            return false
+        }
+        switch clientError {
+        case .connectFailed, .sendFailed, .receiveFailed, .emptyResponse, .timedOut:
+            return true
+        }
     }
 
     private func hookMappingDiagnostic(_ error: Error) -> String {

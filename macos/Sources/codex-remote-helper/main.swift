@@ -50,6 +50,12 @@ private func runServe(arguments: [String]) async {
         exit(69)
     }
 
+    do {
+        _ = try await HookEventQueue().drain(forSocketAt: socketURL, dispatcher: dispatcher)
+    } catch {
+        write("codex-remote-helper: pending hook drain unavailable\n", to: .standardError)
+    }
+
     await waitForTerminationSignal()
     await server.stop()
     exit(0)

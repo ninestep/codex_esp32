@@ -11,6 +11,7 @@ final class GhosttyAppleScriptControllerTests: XCTestCase {
 
         let scripts = await runner.scripts
         XCTAssertEqual(scripts.count, 1)
+        assertUsesGhosttyBundleID(scripts[0])
         XCTAssertTrue(scripts[0].contains(#"terminal id "term-42""#))
         XCTAssertTrue(scripts[0].contains(#"send key "enter" to targetTerm"#))
     }
@@ -23,6 +24,7 @@ final class GhosttyAppleScriptControllerTests: XCTestCase {
 
         let scripts = await runner.scripts
         XCTAssertEqual(scripts.count, 1)
+        assertUsesGhosttyBundleID(scripts[0])
         XCTAssertTrue(scripts[0].contains(#"terminal id "term-42""#))
         XCTAssertTrue(scripts[0].contains(#"send key "escape" to targetTerm"#))
     }
@@ -35,8 +37,22 @@ final class GhosttyAppleScriptControllerTests: XCTestCase {
 
         let scripts = await runner.scripts
         XCTAssertEqual(scripts.count, 1)
+        assertUsesGhosttyBundleID(scripts[0])
         XCTAssertTrue(scripts[0].contains(#"terminal id "term-42""#))
         XCTAssertTrue(scripts[0].contains("send mouse scroll x 0 y -12 precision true to targetTerm"))
+    }
+
+    func testFocusTargetsTerminal() async throws {
+        let runner = RecordingAppleScriptRunner()
+        let controller = GhosttyAppleScriptController(runner: runner)
+
+        try await controller.focus(terminalTargetID: "term-42")
+
+        let scripts = await runner.scripts
+        XCTAssertEqual(scripts.count, 1)
+        assertUsesGhosttyBundleID(scripts[0])
+        XCTAssertTrue(scripts[0].contains(#"terminal id "term-42""#))
+        XCTAssertTrue(scripts[0].contains("focus targetTerm"))
     }
 
     func testCaptureParsesFocusedTerminalContext() async throws {
@@ -55,6 +71,7 @@ final class GhosttyAppleScriptControllerTests: XCTestCase {
         )
         let scripts = await runner.scripts
         XCTAssertEqual(scripts.count, 1)
+        assertUsesGhosttyBundleID(scripts[0])
         XCTAssertTrue(scripts[0].contains("return (id of targetTerm) & tab & (working directory of targetTerm) & tab & (name of targetTerm)"))
     }
 
@@ -123,6 +140,11 @@ final class GhosttyAppleScriptControllerTests: XCTestCase {
             XCTFail("Expected GhosttyControllerError, got \(error)")
         }
     }
+}
+
+private func assertUsesGhosttyBundleID(_ script: String, file: StaticString = #filePath, line: UInt = #line) {
+    XCTAssertTrue(script.contains(#"tell application id "com.mitchellh.ghostty""#), file: file, line: line)
+    XCTAssertFalse(script.contains(#"tell application "Ghostty""#), file: file, line: line)
 }
 
 private actor RecordingAppleScriptRunner: AppleScriptRunning {
