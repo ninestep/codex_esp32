@@ -7,7 +7,9 @@ let arguments = Array(CommandLine.arguments.dropFirst())
 if arguments.first == "serve" {
     await runServe(arguments: Array(arguments.dropFirst()))
 } else {
-    let stdin = FileHandle.standardInput.readDataToEndOfFile()
+    let stdin = HelperStdinPolicy.shouldReadStdin(arguments: arguments)
+        ? FileHandle.standardInput.readDataToEndOfFile()
+        : Data()
     let result = await HelperCommandRunner().run(
         arguments: arguments,
         stdin: stdin,
@@ -19,14 +21,25 @@ if arguments.first == "serve" {
 }
 
 private func runServe(arguments: [String]) async {
-    guard let socketPath = value(after: "--socket", in: arguments), !socketPath.isEmpty else {
-        write("codex-remote-helper: missing --socket\n", to: .standardError)
+    let serveArguments: HelperServeArguments
+    do {
+        serveArguments = try HelperServeArguments.parse(arguments)
+    } catch {
+        write("codex-remote-helper: \(String(describing: error))\n", to: .standardError)
         exit(64)
+    }
+
+    let socketURL = URL(fileURLWithPath: serveArguments.socketPath)
+    do {
+        try ensureSocketParentDirectory(for: socketURL)
+    } catch {
+        write("codex-remote-helper: daemon unavailable\n", to: .standardError)
+        exit(69)
     }
 
     let service = SessionService(controller: GhosttyAppleScriptController())
     let dispatcher = SessionIPCDispatcher(service: service)
-    let server = UnixSocketIPCServer(socketURL: URL(fileURLWithPath: socketPath)) { request in
+    let server = UnixSocketIPCServer(socketURL: socketURL) { request in
         await dispatcher.handle(request)
     }
 
@@ -72,15 +85,20 @@ private func waitForTerminationSignal() async {
     }
 }
 
-private func value(after option: String, in arguments: [String]) -> String? {
-    guard let index = arguments.firstIndex(of: option) else {
-        return nil
+private func ensureSocketParentDirectory(for socketURL: URL) throws {
+    let parentURL = socketURL.deletingLastPathComponent()
+    var isDirectory: ObjCBool = false
+    if FileManager.default.fileExists(atPath: parentURL.path, isDirectory: &isDirectory) {
+        guard isDirectory.boolValue else {
+            throw CocoaError(.fileWriteFileExists)
+        }
+        return
     }
-    let valueIndex = arguments.index(after: index)
-    guard valueIndex < arguments.endIndex else {
-        return nil
-    }
-    return arguments[valueIndex]
+    try FileManager.default.createDirectory(
+        at: parentURL,
+        withIntermediateDirectories: true,
+        attributes: [.posixPermissions: 0o700]
+    )
 }
 
 private func write(_ string: String, to handle: FileHandle) {

@@ -277,23 +277,26 @@ public actor UnixSocketIPCServer {
             return
         }
 
-        if let newlineIndex = frame.firstIndex(of: UInt8(ascii: "\n")) {
-            guard claimFrameProcessing(for: connection) else {
-                return
-            }
-            await process(Data(frame[...newlineIndex]), on: connection)
-            return
-        }
-
         if isComplete {
             guard claimFrameProcessing(for: connection) else {
                 return
             }
-            sendResponse(.error(code: .invalidRequest), on: connection, claim: .processing)
+            guard isExactlyOneCompleteLine(frame) else {
+                sendResponse(.error(code: .invalidRequest), on: connection, claim: .processing)
+                return
+            }
+            await process(frame, on: connection)
             return
         }
 
         receiveFrame(from: connection, accumulated: frame)
+    }
+
+    private func isExactlyOneCompleteLine(_ frame: Data) -> Bool {
+        guard frame.last == UInt8(ascii: "\n") else {
+            return false
+        }
+        return !frame.dropLast().contains(UInt8(ascii: "\n"))
     }
 
     private func process(_ frame: Data, on connection: NWConnection) async {

@@ -100,6 +100,41 @@ final class HelperCommandTests: XCTestCase {
         }
     }
 
+    func testRawHookMapperRejectsWhitespaceRequiredFieldsAndLauncherEnvironment() throws {
+        let whitespaceEvent = Data(#"{"hook_event_name":"   ","session_id":"codex-session"}"#.utf8)
+        XCTAssertThrowsError(try RawHookPayloadMapper(processEnvironment: [:]).map(whitespaceEvent)) { error in
+            XCTAssertEqual(error as? RawHookPayloadMappingError, .missingField("hook_event_name"))
+        }
+
+        let whitespaceSession = Data(#"{"hook_event_name":"Stop","session_id":"   "}"#.utf8)
+        XCTAssertThrowsError(try RawHookPayloadMapper(processEnvironment: [:]).map(whitespaceSession)) { error in
+            XCTAssertEqual(error as? RawHookPayloadMappingError, .missingField("session_id"))
+        }
+
+        let payload = try RawHookPayloadMapper(
+            processEnvironment: ["CODEX_REMOTE_INSTANCE_ID": "   "]
+        ).map(Data(#"{"hook_event_name":"Stop","session_id":"codex-session"}"#.utf8))
+        XCTAssertNil(payload.launcherInstanceID)
+    }
+
+    func testMainStdinPolicyReadsOnlyHookInput() {
+        XCTAssertTrue(HelperStdinPolicy.shouldReadStdin(arguments: ["hook", "--socket", "/tmp/codex.sock"]))
+        XCTAssertFalse(HelperStdinPolicy.shouldReadStdin(arguments: ["register-launch", "--socket", "/tmp/codex.sock", "--launcher", "launcher-1"]))
+        XCTAssertFalse(HelperStdinPolicy.shouldReadStdin(arguments: ["list", "--socket", "/tmp/codex.sock", "--json"]))
+        XCTAssertFalse(HelperStdinPolicy.shouldReadStdin(arguments: ["focus", "--socket", "/tmp/codex.sock", "--session", "remote-1"]))
+        XCTAssertFalse(HelperStdinPolicy.shouldReadStdin(arguments: ["scroll", "--socket", "/tmp/codex.sock", "--session", "remote-1", "--delta", "-1"]))
+        XCTAssertFalse(HelperStdinPolicy.shouldReadStdin(arguments: ["key", "--socket", "/tmp/codex.sock", "--session", "remote-1", "--key", "enter"]))
+        XCTAssertFalse(HelperStdinPolicy.shouldReadStdin(arguments: ["serve", "--socket", "/tmp/codex.sock"]))
+    }
+
+    func testServeArgumentsRequireExactlyOneSocketOption() throws {
+        XCTAssertEqual(try HelperServeArguments.parse(["--socket", "/tmp/codex.sock"]).socketPath, "/tmp/codex.sock")
+        XCTAssertThrowsError(try HelperServeArguments.parse(["--socket", "/tmp/a", "--socket", "/tmp/b"]))
+        XCTAssertThrowsError(try HelperServeArguments.parse(["--socket", "/tmp/a", "--unknown"]))
+        XCTAssertThrowsError(try HelperServeArguments.parse(["--socket", "/tmp/a", "extra"]))
+        XCTAssertThrowsError(try HelperServeArguments.parse(["--socket", "   "]))
+    }
+
     func testListCommandSendsListRequestAndPrintsMachineReadableJSON() async throws {
         let session = RemoteSession(
             remoteSessionID: "remote-1",
@@ -187,6 +222,61 @@ final class HelperCommandTests: XCTestCase {
         XCTAssertTrue(result.stderr.contains("--launcher"))
     }
 
+    func testStrictParserRejectsUnknownDuplicateExtraAndFlagValuesWithoutContactingDaemon() async {
+        let client = RecordingIPCClient(response: .ok)
+        let runner = HelperCommandRunner(socketClient: client)
+
+        let unknown = await runner.run(
+            arguments: ["focus", "--socket", "/tmp/codex.sock", "--session", "remote-1", "--sesion", "typo"],
+            stdin: Data(),
+            environment: [:]
+        )
+        let duplicate = await runner.run(
+            arguments: ["focus", "--socket", "/tmp/codex.sock", "--session", "remote-1", "--session", "remote-2"],
+            stdin: Data(),
+            environment: [:]
+        )
+        let extra = await runner.run(
+            arguments: ["focus", "--socket", "/tmp/codex.sock", "--session", "remote-1", "extra"],
+            stdin: Data(),
+            environment: [:]
+        )
+        let flagValue = await runner.run(
+            arguments: ["list", "--socket", "/tmp/codex.sock", "--json", "false"],
+            stdin: Data(),
+            environment: [:]
+        )
+
+        XCTAssertEqual([unknown.exitCode, duplicate.exitCode, extra.exitCode, flagValue.exitCode], [64, 64, 64, 64])
+        let calls = await client.recordedCalls()
+        XCTAssertEqual(calls, [])
+    }
+
+    func testWhitespaceCLIRequiredValuesExitUsageWithoutContactingDaemon() async {
+        let client = RecordingIPCClient(response: .ok)
+        let runner = HelperCommandRunner(socketClient: client)
+
+        let launcher = await runner.run(
+            arguments: ["register-launch", "--socket", "/tmp/codex.sock", "--launcher", "   "],
+            stdin: Data(),
+            environment: [:]
+        )
+        let session = await runner.run(
+            arguments: ["focus", "--socket", "/tmp/codex.sock", "--session", "   "],
+            stdin: Data(),
+            environment: [:]
+        )
+        let socket = await runner.run(
+            arguments: ["list", "--socket", "   ", "--json"],
+            stdin: Data(),
+            environment: [:]
+        )
+
+        XCTAssertEqual([launcher.exitCode, session.exitCode, socket.exitCode], [64, 64, 64])
+        let calls = await client.recordedCalls()
+        XCTAssertEqual(calls, [])
+    }
+
     func testSessionIPCDispatcherRoutesRequestsThroughSessionService() async throws {
         let controller = HelperRecordingTerminalController()
         let service = SessionService(controller: controller, idGenerator: { "remote-1" })
@@ -255,9 +345,24 @@ final class HelperCommandTests: XCTestCase {
 
         XCTAssertEqual(response, .ok)
         XCTAssertTrue(FileManager.default.fileExists(atPath: socketURL.path))
+        XCTAssertEqual(try socketMode(at: socketURL), 0o600)
 
         await server.stop()
         XCTAssertFalse(FileManager.default.fileExists(atPath: socketURL.path))
+    }
+
+    func testUnixSocketIPCServerStopDoesNotRemoveReplacementFile() async throws {
+        let socketURL = try makeSocketFixture().socketURL
+        let server = UnixSocketIPCServer(socketURL: socketURL) { _ in .ok }
+        try await server.start()
+
+        XCTAssertEqual(unlink(socketURL.path), 0)
+        let replacement = Data("replacement".utf8)
+        FileManager.default.createFile(atPath: socketURL.path, contents: replacement)
+
+        await server.stop()
+
+        XCTAssertEqual(try Data(contentsOf: socketURL), replacement)
     }
 
     func testUnixSocketIPCServerReturnsFixedInvalidRequestForMalformedJSON() async throws {
@@ -276,6 +381,84 @@ final class HelperCommandTests: XCTestCase {
         await server.stop()
     }
 
+    func testUnixSocketIPCServerRejectsTrailingBytesAfterOneLineWithoutCallingHandler() async throws {
+        let socketURL = try makeSocketFixture().socketURL
+        let recorder = IPCRequestRecorder()
+        let server = UnixSocketIPCServer(socketURL: socketURL) { request in
+            await recorder.record(request)
+            return .ok
+        }
+        try await server.start()
+
+        let validFrame = try LocalIPCCodec().encodeRequest(.list)
+        let junkResponse = try await sendRawIPCFrame(validFrame + Data("junk".utf8), to: socketURL)
+        let doubleFrameResponse = try await sendRawIPCFrame(validFrame + validFrame, to: socketURL)
+
+        XCTAssertEqual(try LocalIPCCodec().decodeResponse(junkResponse), .error(code: .invalidRequest))
+        XCTAssertEqual(try LocalIPCCodec().decodeResponse(doubleFrameResponse), .error(code: .invalidRequest))
+        let requests = await recorder.recordedRequests()
+        XCTAssertEqual(requests, [])
+
+        await server.stop()
+    }
+
+    func testUnixSocketIPCServerRejectsOversizedFrameWithoutCallingHandler() async throws {
+        let socketURL = try makeSocketFixture().socketURL
+        let recorder = IPCRequestRecorder()
+        let server = UnixSocketIPCServer(socketURL: socketURL) { request in
+            await recorder.record(request)
+            return .ok
+        }
+        try await server.start()
+
+        let response = try await sendRawIPCFrame(
+            Data(repeating: UInt8(ascii: "x"), count: LocalIPCCodec.maximumFrameBytes + 1),
+            to: socketURL
+        )
+
+        XCTAssertEqual(try LocalIPCCodec().decodeResponse(response), .error(code: .frameTooLarge))
+        let requests = await recorder.recordedRequests()
+        XCTAssertEqual(requests, [])
+
+        await server.stop()
+    }
+
+    func testLocalIPCClientTimesOutWhenDaemonAcceptsButDoesNotRespond() async throws {
+        let socketURL = try makeSocketFixture().socketURL
+        let server = UnixSocketIPCServer(socketURL: socketURL) { _ in
+            try await Task.sleep(for: .milliseconds(250))
+            return .ok
+        }
+        try await server.start()
+
+        let clock = ContinuousClock()
+        let start = clock.now
+        do {
+            _ = try await LocalIPCClient(responseTimeout: .milliseconds(50)).send(.list, to: socketURL)
+            XCTFail("Expected timeout")
+        } catch {
+            XCTAssertEqual(error as? LocalIPCClientError, .timedOut)
+        }
+        XCTAssertLessThan(start.duration(to: clock.now), .milliseconds(500))
+
+        await server.stop()
+    }
+
+    func testLocalIPCClientTimesOutOnPartialResponse() async throws {
+        let socketURL = try makeSocketFixture().socketURL
+        let partialServer = try PartialResponseServer(socketURL: socketURL, responsePrefix: Data(#"{"version":1"#.utf8))
+        try partialServer.start()
+
+        do {
+            _ = try await LocalIPCClient(responseTimeout: .milliseconds(50)).send(.list, to: socketURL)
+            XCTFail("Expected timeout")
+        } catch {
+            XCTAssertEqual(error as? LocalIPCClientError, .timedOut)
+        }
+
+        partialServer.stop()
+    }
+
     private func makeSocketFixture() throws -> SocketFixture {
         let directory = URL(fileURLWithPath: "/tmp", isDirectory: true)
             .appendingPathComponent("ipc-\(UUID().uuidString)", isDirectory: true)
@@ -284,6 +467,18 @@ final class HelperCommandTests: XCTestCase {
             try? FileManager.default.removeItem(at: directory)
         }
         return SocketFixture(socketURL: directory.appendingPathComponent("helper.sock"))
+    }
+}
+
+private actor IPCRequestRecorder {
+    private var requests: [LocalIPCRequest] = []
+
+    func record(_ request: LocalIPCRequest) {
+        requests.append(request)
+    }
+
+    func recordedRequests() -> [LocalIPCRequest] {
+        requests
     }
 }
 
@@ -348,6 +543,87 @@ private actor HelperRecordingTerminalController: TerminalController {
 
 private struct SocketFixture {
     let socketURL: URL
+}
+
+private func socketMode(at socketURL: URL) throws -> mode_t {
+    var status = stat()
+    guard socketURL.path.withCString({ lstat($0, &status) }) == 0 else {
+        throw POSIXError(.init(rawValue: errno) ?? .EIO)
+    }
+    return status.st_mode & mode_t(0o777)
+}
+
+private final class PartialResponseServer {
+    private let socketURL: URL
+    private let responsePrefix: Data
+    private var descriptor: Int32 = -1
+    private var task: Task<Void, Never>?
+
+    init(socketURL: URL, responsePrefix: Data) throws {
+        self.socketURL = socketURL
+        self.responsePrefix = responsePrefix
+    }
+
+    func start() throws {
+        descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard descriptor >= 0 else {
+            throw POSIXError(.init(rawValue: errno) ?? .EIO)
+        }
+
+        var address = sockaddr_un()
+        address.sun_family = sa_family_t(AF_UNIX)
+        let pathBytes = Array(socketURL.path.utf8CString)
+        let capacity = MemoryLayout.size(ofValue: address.sun_path)
+        guard pathBytes.count <= capacity else {
+            throw POSIXError(.ENAMETOOLONG)
+        }
+        withUnsafeMutablePointer(to: &address.sun_path) { pointer in
+            pointer.withMemoryRebound(to: CChar.self, capacity: capacity) { buffer in
+                for index in pathBytes.indices {
+                    buffer[index] = pathBytes[index]
+                }
+            }
+        }
+
+        let bound = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.bind(descriptor, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+            }
+        }
+        guard bound == 0 else {
+            throw POSIXError(.init(rawValue: errno) ?? .EIO)
+        }
+        guard listen(descriptor, 1) == 0 else {
+            throw POSIXError(.init(rawValue: errno) ?? .EIO)
+        }
+
+        task = Task.detached { [descriptor, responsePrefix] in
+            let accepted = accept(descriptor, nil, nil)
+            guard accepted >= 0 else {
+                return
+            }
+            defer {
+                close(accepted)
+            }
+            _ = responsePrefix.withUnsafeBytes { rawBuffer in
+                guard let baseAddress = rawBuffer.baseAddress else {
+                    return 0
+                }
+                return Darwin.write(accepted, baseAddress, responsePrefix.count)
+            }
+            try? await Task.sleep(for: .milliseconds(250))
+        }
+    }
+
+    func stop() {
+        task?.cancel()
+        task = nil
+        if descriptor >= 0 {
+            close(descriptor)
+            descriptor = -1
+        }
+        unlink(socketURL.path)
+    }
 }
 
 private func sendRawIPCFrame(_ frame: Data, to socketURL: URL) async throws -> Data {

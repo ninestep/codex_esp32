@@ -25,20 +25,19 @@ public struct HelperCommandRunner: Sendable {
             return usage("command required")
         }
 
-        let parser = OptionParser(arguments: Array(arguments.dropFirst()))
         switch command {
         case "register-launch":
-            return await registerLaunch(parser)
+            return await registerLaunch(arguments: Array(arguments.dropFirst()))
         case "hook":
-            return await hook(parser, stdin: stdin, environment: environment)
+            return await hook(arguments: Array(arguments.dropFirst()), stdin: stdin, environment: environment)
         case "list":
-            return await list(parser)
+            return await list(arguments: Array(arguments.dropFirst()))
         case "focus":
-            return await commandWithSession(parser, makeRequest: LocalIPCRequest.focus(remoteSessionID:))
+            return await commandWithSession(arguments: Array(arguments.dropFirst()), makeRequest: LocalIPCRequest.focus(remoteSessionID:))
         case "scroll":
-            return await scroll(parser)
+            return await scroll(arguments: Array(arguments.dropFirst()))
         case "key":
-            return await key(parser)
+            return await key(arguments: Array(arguments.dropFirst()))
         case "serve":
             return usage("serve is only available through the process entrypoint")
         default:
@@ -46,8 +45,9 @@ public struct HelperCommandRunner: Sendable {
         }
     }
 
-    private func registerLaunch(_ parser: OptionParser) async -> HelperCommandResult {
+    private func registerLaunch(arguments: [String]) async -> HelperCommandResult {
         do {
+            let parser = try HelperOptionParser(arguments: arguments, valuedOptions: ["--socket", "--launcher"], flags: [])
             let socketURL = try parser.requiredURL("--socket")
             let launcherID = try parser.required("--launcher")
             return await sendExpectingOK(.registerLaunch(launcherID: launcherID), to: socketURL)
@@ -56,9 +56,10 @@ public struct HelperCommandRunner: Sendable {
         }
     }
 
-    private func hook(_ parser: OptionParser, stdin: Data, environment: [String: String]) async -> HelperCommandResult {
+    private func hook(arguments: [String], stdin: Data, environment: [String: String]) async -> HelperCommandResult {
         let socketURL: URL
         do {
+            let parser = try HelperOptionParser(arguments: arguments, valuedOptions: ["--socket"], flags: [])
             socketURL = try parser.requiredURL("--socket")
         } catch {
             return usage(String(describing: error))
@@ -73,8 +74,9 @@ public struct HelperCommandRunner: Sendable {
         return await sendExpectingOK(.hook(payload), to: socketURL)
     }
 
-    private func list(_ parser: OptionParser) async -> HelperCommandResult {
+    private func list(arguments: [String]) async -> HelperCommandResult {
         do {
+            let parser = try HelperOptionParser(arguments: arguments, valuedOptions: ["--socket"], flags: ["--json"])
             let socketURL = try parser.requiredURL("--socket")
             guard parser.has("--json") else {
                 return usage("missing --json")
@@ -93,10 +95,11 @@ public struct HelperCommandRunner: Sendable {
     }
 
     private func commandWithSession(
-        _ parser: OptionParser,
+        arguments: [String],
         makeRequest: (String) -> LocalIPCRequest
     ) async -> HelperCommandResult {
         do {
+            let parser = try HelperOptionParser(arguments: arguments, valuedOptions: ["--socket", "--session"], flags: [])
             let socketURL = try parser.requiredURL("--socket")
             let sessionID = try parser.required("--session")
             return await sendExpectingOK(makeRequest(sessionID), to: socketURL)
@@ -105,8 +108,9 @@ public struct HelperCommandRunner: Sendable {
         }
     }
 
-    private func scroll(_ parser: OptionParser) async -> HelperCommandResult {
+    private func scroll(arguments: [String]) async -> HelperCommandResult {
         do {
+            let parser = try HelperOptionParser(arguments: arguments, valuedOptions: ["--socket", "--session", "--delta"], flags: [])
             let socketURL = try parser.requiredURL("--socket")
             let sessionID = try parser.required("--session")
             guard let delta = Int(try parser.required("--delta")) else {
@@ -118,8 +122,9 @@ public struct HelperCommandRunner: Sendable {
         }
     }
 
-    private func key(_ parser: OptionParser) async -> HelperCommandResult {
+    private func key(arguments: [String]) async -> HelperCommandResult {
         do {
+            let parser = try HelperOptionParser(arguments: arguments, valuedOptions: ["--socket", "--session", "--key"], flags: [])
             let socketURL = try parser.requiredURL("--socket")
             let sessionID = try parser.required("--session")
             guard let key = TerminalKey(rawValue: try parser.required("--key")) else {
@@ -168,60 +173,6 @@ public struct HelperCommandRunner: Sendable {
             "malformed_json"
         default:
             "invalid_hook"
-        }
-    }
-}
-
-private struct OptionParser: Sendable {
-    private let options: [String: String]
-    private let flags: Set<String>
-
-    init(arguments: [String]) {
-        var parsed: [String: String] = [:]
-        var parsedFlags: Set<String> = []
-        var index = 0
-        while index < arguments.count {
-            let key = arguments[index]
-            guard key.hasPrefix("--") else {
-                index += 1
-                continue
-            }
-            let nextIndex = index + 1
-            if nextIndex < arguments.count, !arguments[nextIndex].hasPrefix("--") {
-                parsed[key] = arguments[nextIndex]
-                index += 2
-            } else {
-                parsedFlags.insert(key)
-                index += 1
-            }
-        }
-        self.options = parsed
-        self.flags = parsedFlags
-    }
-
-    func has(_ name: String) -> Bool {
-        options.keys.contains(name) || flags.contains(name)
-    }
-
-    func required(_ name: String) throws -> String {
-        guard let value = options[name], !value.isEmpty else {
-            throw HelperOptionError.missing(name)
-        }
-        return value
-    }
-
-    func requiredURL(_ name: String) throws -> URL {
-        URL(fileURLWithPath: try required(name))
-    }
-}
-
-private enum HelperOptionError: Error, CustomStringConvertible {
-    case missing(String)
-
-    var description: String {
-        switch self {
-        case .missing(let option):
-            "missing \(option)"
         }
     }
 }

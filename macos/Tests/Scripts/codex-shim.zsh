@@ -98,6 +98,20 @@ launcher=$(<"$TMP_DIR/helper-launcher")
 assert_file_equals "$TMP_DIR/helper-launcher" "$TMP_DIR/helper-env"
 assert_file_equals "$TMP_DIR/helper-launcher" "$TMP_DIR/real-env"
 
+mkdir -p "$TMP_DIR/trailing-tmp"
+HELPER_ARGS="$TMP_DIR/default-helper-args" \
+HELPER_ENV="$TMP_DIR/default-helper-env" \
+HELPER_LAUNCHER="$TMP_DIR/default-helper-launcher" \
+REAL_ARGS="$TMP_DIR/default-real-args" \
+REAL_ENV="$TMP_DIR/default-real-env" \
+TMPDIR="$TMP_DIR/trailing-tmp/" \
+CODEX_REMOTE_SOCKET="" \
+CODEX_REMOTE_HELPER="$HELPER" \
+CODEX_REMOTE_REAL_CODEX="$REAL_CODEX" \
+zsh "$SHIM" "default socket" > "$TMP_DIR/default-stdout" 2> "$TMP_DIR/default-stderr"
+expected_default_socket="$TMP_DIR/trailing-tmp/codex-remote-$UID/events.sock"
+grep -q -- "--socket $expected_default_socket" "$TMP_DIR/default-helper-args" || fail "shim default socket path mismatch"
+
 set +e
 HELPER_ARGS="$TMP_DIR/no-real-helper-args" \
 HELPER_ENV="$TMP_DIR/no-real-helper-env" \
@@ -147,6 +161,17 @@ grep -q "helper register-launch failed" "$TMP_DIR/failing-stderr" || fail "missi
 grep -q "real stderr" "$TMP_DIR/failing-stderr" || fail "real stderr missing after helper failure"
 
 HOOK_INPUT='{"hook_event_name":"Stop","session_id":"codex-1"}'
+printf '%s' "$HOOK_INPUT" | env \
+  HELPER_ARGS="$TMP_DIR/default-hook-helper-args" \
+  HELPER_ENV="$TMP_DIR/default-hook-helper-env" \
+  HELPER_LAUNCHER="$TMP_DIR/default-hook-helper-launcher" \
+  HOOK_STDIN="$TMP_DIR/default-hook-stdin" \
+  TMPDIR="$TMP_DIR/trailing-tmp/" \
+  CODEX_REMOTE_SOCKET="" \
+  CODEX_REMOTE_HELPER="$HELPER" \
+  zsh "$HOOK"
+grep -q -- "--socket $expected_default_socket" "$TMP_DIR/default-hook-helper-args" || fail "hook default socket path mismatch"
+
 printf '%s' "$HOOK_INPUT" | env \
   HELPER_ARGS="$TMP_DIR/hook-helper-args" \
   HELPER_ENV="$TMP_DIR/hook-helper-env" \

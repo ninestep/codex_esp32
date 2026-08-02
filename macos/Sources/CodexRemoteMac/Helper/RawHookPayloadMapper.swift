@@ -34,21 +34,21 @@ public struct RawHookPayloadMapper: Sendable {
         return HookPayload(
             hookEventName: hookEventName,
             sessionID: sessionID,
-            launcherInstanceID: nonEmpty(jsonLauncherID) ?? nonEmpty(processEnvironment["CODEX_REMOTE_INSTANCE_ID"]),
+            launcherInstanceID: nonBlank(jsonLauncherID) ?? nonBlank(processEnvironment["CODEX_REMOTE_INSTANCE_ID"]),
             message: object["message"] as? String,
             lastAssistantMessage: object["last_assistant_message"] as? String
         )
     }
 
     private func requiredString(_ key: String, in object: [String: Any]) throws -> String {
-        guard let value = object[key] as? String, let nonEmptyValue = nonEmpty(value) else {
+        guard let value = object[key] as? String, let nonEmptyValue = nonBlank(value) else {
             throw RawHookPayloadMappingError.missingField(key)
         }
         return nonEmptyValue
     }
 
-    private func nonEmpty(_ value: String?) -> String? {
-        guard let value, !value.isEmpty else {
+    private func nonBlank(_ value: String?) -> String? {
+        guard let value, value.unicodeScalars.contains(where: { !CharacterSet.whitespacesAndNewlines.contains($0) }) else {
             return nil
         }
         return value
