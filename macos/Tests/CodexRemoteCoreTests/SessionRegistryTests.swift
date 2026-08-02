@@ -48,6 +48,28 @@ final class SessionRegistryTests: XCTestCase {
         }
     }
 
+    func testRegisterLaunchRejectsDuplicateLauncher() async throws {
+        let registry = SessionRegistry(idGenerator: IDGenerator(["remote-1", "remote-2"]).next)
+        try await registry.registerLaunch(
+            launcherInstanceID: "launch-1",
+            terminalTargetID: "term-7",
+            displayTitle: "ESP32",
+            workingDirectoryLabel: "~/esp32"
+        )
+
+        do {
+            try await registry.registerLaunch(
+                launcherInstanceID: "launch-1",
+                terminalTargetID: "term-8",
+                displayTitle: "ESP32 duplicate",
+                workingDirectoryLabel: "~/esp32-duplicate"
+            )
+            XCTFail("Expected duplicateLauncher")
+        } catch {
+            XCTAssertEqual(error as? SessionRegistryError, .duplicateLauncher("launch-1"))
+        }
+    }
+
     func testSessionByProviderIDReturnsSameRemoteSession() async throws {
         let registry = SessionRegistry(idGenerator: { "remote-fixed" })
         try await registry.registerLaunch(
@@ -64,6 +86,17 @@ final class SessionRegistryTests: XCTestCase {
         let found = try await registry.session(providerSessionID: "codex-99")
 
         XCTAssertEqual(found, bound)
+    }
+
+    func testSessionByRemoteIDRejectsUnknownRemoteSession() async throws {
+        let registry = SessionRegistry(idGenerator: { "remote-fixed" })
+
+        do {
+            _ = try await registry.session(remoteSessionID: "missing")
+            XCTFail("Expected unknownRemoteSession")
+        } catch {
+            XCTAssertEqual(error as? SessionRegistryError, .unknownRemoteSession("missing"))
+        }
     }
 
     func testApplyProviderStateResultUpdatesSessionFields() async throws {
@@ -182,6 +215,39 @@ final class SessionRegistryTests: XCTestCase {
         let sessions = await registry.activeSessions(limit: 1)
 
         XCTAssertEqual(sessions.map(\.remoteSessionID), ["remote-second"])
+    }
+
+    func testActiveSessionsDefaultLimitReturnsEightNewestSessions() async throws {
+        let ids = (1...9).map { "remote-\($0)" }
+        let registry = SessionRegistry(idGenerator: IDGenerator(ids).next)
+
+        for index in 1...9 {
+            try await registry.registerLaunch(
+                launcherInstanceID: "launch-\(index)",
+                terminalTargetID: "term-\(index)",
+                displayTitle: "ESP32 \(index)",
+                workingDirectoryLabel: "~/esp32-\(index)"
+            )
+            _ = try await registry.bindProviderSession(
+                launcherInstanceID: "launch-\(index)",
+                providerSessionID: "codex-\(index)"
+            )
+            _ = try await registry.apply(
+                SessionStateResult(
+                    state: .working,
+                    statusDetail: "session \(index)",
+                    unread: false,
+                    updatedAt: fixedDate.addingTimeInterval(TimeInterval(index))
+                ),
+                providerSessionID: "codex-\(index)"
+            )
+        }
+
+        let sessions = await registry.activeSessions()
+
+        XCTAssertEqual(sessions.count, 8)
+        XCTAssertEqual(sessions.map(\.remoteSessionID), (2...9).reversed().map { "remote-\($0)" })
+        XCTAssertFalse(sessions.map(\.remoteSessionID).contains("remote-1"))
     }
 }
 
