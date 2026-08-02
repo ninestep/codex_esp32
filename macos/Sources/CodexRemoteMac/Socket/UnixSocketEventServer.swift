@@ -197,12 +197,12 @@ public actor UnixSocketEventServer {
     private func accept(_ connection: NWConnection) {
         guard connections.count < maximumActiveConnections else {
             connection.start(queue: queue)
-            sendResponse(.serverBusy, on: connection)
+            sendResponse(.serverBusy, on: connection, requireTrackedConnection: false)
             return
         }
 
         let identifier = ObjectIdentifier(connection)
-        connections[identifier] = ConnectionState(connection: connection, timeoutTask: nil)
+        connections[identifier] = ConnectionState(connection: connection, lifecycle: ConnectionLifecycle(), timeoutTask: nil)
         let timeoutTask = Task {
             do {
                 try await Task.sleep(for: frameReadTimeout)
@@ -227,6 +227,10 @@ public actor UnixSocketEventServer {
     }
 
     private func receiveFrame(from connection: NWConnection, accumulated: Data) {
+        guard canReceiveFrame(from: connection) else {
+            return
+        }
+
         let remainingBytes = LocalEventCodec.maximumFrameBytes + 1 - accumulated.count
         guard remainingBytes > 0 else {
             sendResponse(.frameTooLarge, on: connection)
@@ -259,6 +263,10 @@ public actor UnixSocketEventServer {
             return
         }
 
+        guard canReceiveFrame(from: connection) else {
+            return
+        }
+
         var frame = accumulated
         if let data {
             frame.append(data)
@@ -270,6 +278,9 @@ public actor UnixSocketEventServer {
         }
 
         if isComplete {
+            guard claimFrameProcessing(for: connection) else {
+                return
+            }
             await process(frame, on: connection)
             return
         }
@@ -300,8 +311,16 @@ public actor UnixSocketEventServer {
         }
     }
 
-    private func sendResponse(_ response: SocketResponse, on connection: NWConnection) {
-        cancelReadTimeout(for: connection)
+    private func sendResponse(
+        _ response: SocketResponse,
+        on connection: NWConnection,
+        requireTrackedConnection: Bool = true
+    ) {
+        if requireTrackedConnection {
+            guard claimTerminalResponse(for: connection) else {
+                return
+            }
+        }
         connection.send(
             content: response.data,
             contentContext: .defaultMessage,
@@ -322,14 +341,36 @@ public actor UnixSocketEventServer {
         sendResponse(.readTimeout, on: connection)
     }
 
-    private func cancelReadTimeout(for connection: NWConnection) {
+    private func canReceiveFrame(from connection: NWConnection) -> Bool {
+        connections[ObjectIdentifier(connection)]?.lifecycle.canReceiveFrame ?? false
+    }
+
+    private func claimFrameProcessing(for connection: NWConnection) -> Bool {
         let identifier = ObjectIdentifier(connection)
         guard var state = connections[identifier] else {
-            return
+            return false
+        }
+        guard state.lifecycle.claimFrameProcessing() else {
+            return false
         }
         state.timeoutTask?.cancel()
         state.timeoutTask = nil
         connections[identifier] = state
+        return true
+    }
+
+    private func claimTerminalResponse(for connection: NWConnection) -> Bool {
+        let identifier = ObjectIdentifier(connection)
+        guard var state = connections[identifier] else {
+            return false
+        }
+        guard state.lifecycle.claimTerminalResponse() else {
+            return false
+        }
+        state.timeoutTask?.cancel()
+        state.timeoutTask = nil
+        connections[identifier] = state
+        return true
     }
 
     private func removeConnection(_ connection: NWConnection) {
@@ -344,7 +385,38 @@ public actor UnixSocketEventServer {
 
 private struct ConnectionState {
     let connection: NWConnection
+    var lifecycle: ConnectionLifecycle
     var timeoutTask: Task<Void, Never>?
+}
+
+struct ConnectionLifecycle: Sendable {
+    private enum Phase: Sendable {
+        case active
+        case processing
+        case responding
+    }
+
+    private var phase: Phase = .active
+
+    var canReceiveFrame: Bool {
+        phase == .active
+    }
+
+    mutating func claimFrameProcessing() -> Bool {
+        guard phase == .active else {
+            return false
+        }
+        phase = .processing
+        return true
+    }
+
+    mutating func claimTerminalResponse() -> Bool {
+        guard phase != .responding else {
+            return false
+        }
+        phase = .responding
+        return true
+    }
 }
 
 private struct SocketIdentity: Equatable, Sendable {

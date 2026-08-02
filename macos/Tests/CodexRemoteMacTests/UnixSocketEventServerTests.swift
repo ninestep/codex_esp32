@@ -180,31 +180,92 @@ final class UnixSocketEventServerTests: XCTestCase {
         await server.stop()
     }
 
+    func testConnectionLifecycleIgnoresCompleteFrameAfterTimeoutResponseIsClaimed() {
+        var lifecycle = ConnectionLifecycle()
+
+        XCTAssertTrue(lifecycle.claimTerminalResponse())
+        XCTAssertFalse(lifecycle.claimFrameProcessing())
+        XCTAssertFalse(lifecycle.claimTerminalResponse())
+    }
+
+    func testTimedOutConnectionDoesNotProcessLateCompleteFrameOrSendSecondResponse() async throws {
+        let socketURL = try makeSocketFixture().socketURL
+        let recorder = EventRecorder()
+        let server = UnixSocketEventServer(
+            socketURL: socketURL,
+            frameReadTimeout: .milliseconds(5)
+        ) { event in
+            await recorder.record(event)
+        }
+        try await server.start()
+
+        let client = try openConnectedClient(to: socketURL)
+        defer {
+            close(client)
+        }
+        try await Task.sleep(for: .milliseconds(30))
+
+        let event = LocalEvent.launchRegistered(
+            LaunchRegistration(
+                launcherInstanceID: "late-launch",
+                terminalTargetID: "late-terminal",
+                displayTitle: "Late ESP32",
+                workingDirectoryLabel: "~/late"
+            )
+        )
+        try? writeAll(try LocalEventCodec().encode(event), to: client)
+        _ = shutdown(client, SHUT_WR)
+
+        let responseData = try await readRawResponse(from: client)
+        XCTAssertEqual(responseData, Data(#"{"ok":false,"error":"read_timeout"}"#.utf8))
+        XCTAssertEqual(try JSONDecoder().decode(SocketResponse.self, from: responseData), SocketResponse(ok: false, error: "read_timeout"))
+        let recordedEvents = await recorder.events()
+        XCTAssertEqual(recordedEvents, [])
+
+        await server.stop()
+    }
+
     func testConnectionLimitReturnsServerBusyAndKeepsExistingServerUsable() async throws {
         let socketURL = try makeSocketFixture().socketURL
+        let recorder = EventRecorder()
         let server = UnixSocketEventServer(
             socketURL: socketURL,
             maximumActiveConnections: 2,
             frameReadTimeout: .seconds(5),
-            handler: { _ in }
+            handler: { event in
+                await recorder.record(event)
+            }
         )
         try await server.start()
 
         let firstIdleClient = try openConnectedClient(to: socketURL)
         let secondIdleClient = try openConnectedClient(to: socketURL)
         defer {
-            close(firstIdleClient)
             close(secondIdleClient)
         }
-        try await Task.sleep(nanoseconds: 50_000_000)
 
         let busyClient = try openConnectedClient(to: socketURL)
-        defer {
-            close(busyClient)
-        }
-        let busyResult = try await readResponse(from: busyClient)
+        let busyResult = try await waitForServerBusy(from: busyClient, to: socketURL)
 
         XCTAssertEqual(busyResult.response, SocketResponse(ok: false, error: "server_busy"))
+
+        close(firstIdleClient)
+        let event = LocalEvent.launchRegistered(
+            LaunchRegistration(
+                launcherInstanceID: "after-busy",
+                terminalTargetID: "terminal-after-busy",
+                displayTitle: "ESP32 After Busy",
+                workingDirectoryLabel: "~/after-busy"
+            )
+        )
+        let successAfterSlotRelease = try await sendFrameEventually(
+            try LocalEventCodec().encode(event),
+            to: socketURL,
+            expected: SocketResponse(ok: true, error: nil)
+        )
+        XCTAssertEqual(successAfterSlotRelease.response, SocketResponse(ok: true, error: nil))
+        let recordedEvents = await recorder.events()
+        XCTAssertEqual(recordedEvents, [event])
 
         await server.stop()
     }
@@ -355,20 +416,69 @@ private func withTimeout<T: Sendable>(
 }
 
 private func readResponse(from fileDescriptor: Int32) async throws -> SocketExchangeResult {
+    let responseData = try await readRawResponse(from: fileDescriptor)
+    let response = try JSONDecoder().decode(SocketResponse.self, from: responseData)
+    return SocketExchangeResult(
+        response: response,
+        rawResponseString: String(decoding: responseData, as: UTF8.self),
+        connectionClosed: true
+    )
+}
+
+private func readRawResponse(from fileDescriptor: Int32) async throws -> Data {
     try await withTimeout(seconds: 3) {
         try await Task.detached {
             let responseData = try readUntilEOF(from: fileDescriptor)
             guard !responseData.isEmpty else {
                 throw POSIXClientError.emptyResponse
             }
-            let response = try JSONDecoder().decode(SocketResponse.self, from: responseData)
-            return SocketExchangeResult(
-                response: response,
-                rawResponseString: String(decoding: responseData, as: UTF8.self),
-                connectionClosed: true
-            )
+            return responseData
         }.value
     }
+}
+
+private func sendFrameEventually(
+    _ frame: Data,
+    to socketURL: URL,
+    expected: SocketResponse
+) async throws -> SocketExchangeResult {
+    let deadline = Date().addingTimeInterval(3)
+    var lastResult: SocketExchangeResult?
+
+    while Date() < deadline {
+        let result = try await sendFrame(frame, to: socketURL)
+        if result.response == expected {
+            return result
+        }
+        lastResult = result
+        try await Task.sleep(for: .milliseconds(10))
+    }
+
+    return try XCTUnwrap(lastResult)
+}
+
+private func waitForServerBusy(from firstClient: Int32, to socketURL: URL) async throws -> SocketExchangeResult {
+    var client: Int32? = firstClient
+    defer {
+        if let client {
+            close(client)
+        }
+    }
+
+    let deadline = Date().addingTimeInterval(3)
+    while Date() < deadline {
+        let currentClient = try XCTUnwrap(client)
+        do {
+            return try await readResponse(from: currentClient)
+        } catch POSIXClientError.systemCall("read", EAGAIN) {
+            close(currentClient)
+            client = nil
+            try await Task.sleep(for: .milliseconds(10))
+            client = try openConnectedClient(to: socketURL)
+        }
+    }
+
+    return try await readResponse(from: try XCTUnwrap(client))
 }
 
 private func sendFrameSynchronously(_ frame: Data, to socketURL: URL) throws -> SocketExchangeResult {
@@ -407,6 +517,17 @@ private func openConnectedClient(to socketURL: URL) throws -> Int32 {
         SO_RCVTIMEO,
         &timeout,
         socklen_t(MemoryLayout<timeval>.size)
+    ) == 0 else {
+        throw POSIXClientError.systemCall("setsockopt", errno)
+    }
+
+    var noSignal: Int32 = 1
+    guard setsockopt(
+        fileDescriptor,
+        SOL_SOCKET,
+        SO_NOSIGPIPE,
+        &noSignal,
+        socklen_t(MemoryLayout<Int32>.size)
     ) == 0 else {
         throw POSIXClientError.systemCall("setsockopt", errno)
     }
