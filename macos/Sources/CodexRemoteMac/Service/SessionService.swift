@@ -35,6 +35,17 @@ public actor SessionService {
     }
 
     @discardableResult
+    public func registerLaunchSnapshot(_ snapshot: LaunchRegistration) async throws -> RemoteSession {
+        try await registry.registerLaunch(
+            launcherInstanceID: snapshot.launcherInstanceID,
+            terminalTargetID: snapshot.terminalTargetID,
+            displayTitle: snapshot.displayTitle,
+            workingDirectoryLabel: snapshot.workingDirectoryLabel
+        )
+        return try await session(launcherInstanceID: snapshot.launcherInstanceID)
+    }
+
+    @discardableResult
     public func receiveHook(_ payload: HookPayload) async throws -> RemoteSession? {
         switch payload.hookEventName {
         case "SessionStart":

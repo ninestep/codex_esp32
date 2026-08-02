@@ -8,10 +8,11 @@ public protocol LocalIPCClienting: Sendable {
 
 public enum LocalIPCClientError: Error, Equatable, Sendable {
     case connectFailed(Int32)
+    case connectTimedOut
     case sendFailed(Int32)
     case receiveFailed(Int32)
     case emptyResponse
-    case timedOut
+    case readTimedOut
 }
 
 public struct LocalIPCClient: LocalIPCClienting {
@@ -94,7 +95,13 @@ public struct LocalIPCClient: LocalIPCClienting {
             case EINTR:
                 continue
             case EINPROGRESS, EALREADY:
-                try waitFor(descriptor, events: Int16(POLLOUT), deadline: deadline)
+                do {
+                    try waitFor(descriptor, events: Int16(POLLOUT), deadline: deadline)
+                } catch IPCPollError.timedOut {
+                    throw LocalIPCClientError.connectTimedOut
+                } catch IPCPollError.failed(let code) {
+                    throw LocalIPCClientError.connectFailed(code)
+                }
                 var socketError: Int32 = 0
                 var socketErrorLength = socklen_t(MemoryLayout.size(ofValue: socketError))
                 guard getsockopt(descriptor, SOL_SOCKET, SO_ERROR, &socketError, &socketErrorLength) == 0 else {
@@ -105,7 +112,7 @@ public struct LocalIPCClient: LocalIPCClienting {
                 }
                 return
             case EAGAIN:
-                throw LocalIPCClientError.timedOut
+                throw LocalIPCClientError.connectTimedOut
             default:
                 throw LocalIPCClientError.connectFailed(errno)
             }
@@ -120,7 +127,13 @@ public struct LocalIPCClient: LocalIPCClienting {
 
             var written = 0
             while written < data.count {
-                try waitFor(descriptor, events: Int16(POLLOUT), deadline: deadline)
+                do {
+                    try waitFor(descriptor, events: Int16(POLLOUT), deadline: deadline)
+                } catch IPCPollError.timedOut {
+                    throw LocalIPCClientError.sendFailed(ETIMEDOUT)
+                } catch IPCPollError.failed(let code) {
+                    throw LocalIPCClientError.sendFailed(code)
+                }
                 let result = Darwin.write(
                     descriptor,
                     baseAddress.advanced(by: written),
@@ -146,7 +159,13 @@ public struct LocalIPCClient: LocalIPCClienting {
         var data = Data()
         var buffer = [UInt8](repeating: 0, count: 4096)
         while data.count <= LocalIPCCodec.maximumFrameBytes {
-            try waitFor(descriptor, events: Int16(POLLIN), deadline: deadline)
+            do {
+                try waitFor(descriptor, events: Int16(POLLIN), deadline: deadline)
+            } catch IPCPollError.timedOut {
+                throw LocalIPCClientError.readTimedOut
+            } catch IPCPollError.failed(let code) {
+                throw LocalIPCClientError.receiveFailed(code)
+            }
             let count = Darwin.read(descriptor, &buffer, buffer.count)
             if count > 0 {
                 data.append(buffer, count: count)
@@ -176,19 +195,24 @@ public struct LocalIPCClient: LocalIPCClienting {
             let result = poll(&pollDescriptor, 1, try deadline.remainingMilliseconds())
             if result > 0 {
                 if pollDescriptor.revents & Int16(POLLERR | POLLNVAL) != 0 {
-                    throw LocalIPCClientError.receiveFailed(EIO)
+                    throw IPCPollError.failed(EIO)
                 }
                 return
             }
             if result == 0 {
-                throw LocalIPCClientError.timedOut
+                throw IPCPollError.timedOut
             }
             if errno == EINTR {
                 continue
             }
-            throw LocalIPCClientError.receiveFailed(errno)
+            throw IPCPollError.failed(errno)
         }
     }
+}
+
+private enum IPCPollError: Error {
+    case timedOut
+    case failed(Int32)
 }
 
 private struct IPCDeadline: Sendable {
@@ -202,7 +226,7 @@ private struct IPCDeadline: Sendable {
     func remainingMilliseconds() throws -> Int32 {
         let now = DispatchTime.now().uptimeNanoseconds
         guard now < endUptimeNanoseconds else {
-            throw LocalIPCClientError.timedOut
+            throw IPCPollError.timedOut
         }
         let remainingNanoseconds = endUptimeNanoseconds - now
         let milliseconds = max(1, (remainingNanoseconds + 999_999) / 1_000_000)

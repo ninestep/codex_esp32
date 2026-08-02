@@ -33,4 +33,19 @@ public struct SessionIPCDispatcher: Sendable {
             return .error(code: .handlerFailed)
         }
     }
+
+    public func handlePending(_ event: PendingLocalEvent) async -> LocalIPCResponse {
+        do {
+            switch event {
+            case .launchSnapshot(let snapshot):
+                _ = try await service.registerLaunchSnapshot(snapshot)
+                return .ok
+            case .hook(let payload):
+                _ = try await service.receiveHook(payload)
+                return .ok
+            }
+        } catch {
+            return .error(code: .handlerFailed)
+        }
+    }
 }

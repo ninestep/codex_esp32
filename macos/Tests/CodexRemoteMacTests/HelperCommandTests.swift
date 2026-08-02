@@ -492,7 +492,7 @@ final class HelperCommandTests: XCTestCase {
             _ = try await LocalIPCClient(responseTimeout: .milliseconds(50)).send(.list, to: socketURL)
             XCTFail("Expected timeout")
         } catch {
-            XCTAssertEqual(error as? LocalIPCClientError, .timedOut)
+            XCTAssertEqual(error as? LocalIPCClientError, .readTimedOut)
         }
         XCTAssertLessThan(start.duration(to: clock.now), .milliseconds(500))
 
@@ -508,7 +508,7 @@ final class HelperCommandTests: XCTestCase {
             _ = try await LocalIPCClient(responseTimeout: .milliseconds(50)).send(.list, to: socketURL)
             XCTFail("Expected timeout")
         } catch {
-            XCTAssertEqual(error as? LocalIPCClientError, .timedOut)
+            XCTAssertEqual(error as? LocalIPCClientError, .readTimedOut)
         }
 
         partialServer.stop()

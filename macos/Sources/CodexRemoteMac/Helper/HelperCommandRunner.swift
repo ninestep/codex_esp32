@@ -13,13 +13,41 @@ public struct HelperCommandResult: Equatable, Sendable {
     }
 }
 
+public protocol LaunchSnapshotCapturing: Sendable {
+    func captureLaunchSnapshot(launcherID: String) async throws -> LaunchRegistration
+}
+
+public struct GhosttyLaunchSnapshotCapturer: LaunchSnapshotCapturing {
+    private let controller: any TerminalController
+
+    public init(controller: any TerminalController = GhosttyAppleScriptController()) {
+        self.controller = controller
+    }
+
+    public func captureLaunchSnapshot(launcherID: String) async throws -> LaunchRegistration {
+        let context = try await controller.captureFocusedTerminal()
+        return LaunchRegistration(
+            launcherInstanceID: launcherID,
+            terminalTargetID: context.terminalTargetID,
+            displayTitle: context.displayTitle,
+            workingDirectoryLabel: URL(fileURLWithPath: context.workingDirectory).lastPathComponent
+        )
+    }
+}
+
 public struct HelperCommandRunner: Sendable {
     private let socketClient: any LocalIPCClienting
     private let hookQueue: any HookEventQueueing
+    private let launchSnapshotCapturer: any LaunchSnapshotCapturing
 
-    public init(socketClient: any LocalIPCClienting = LocalIPCClient(), hookQueue: any HookEventQueueing = HookEventQueue()) {
+    public init(
+        socketClient: any LocalIPCClienting = LocalIPCClient(),
+        hookQueue: any HookEventQueueing = HookEventQueue(),
+        launchSnapshotCapturer: any LaunchSnapshotCapturing = GhosttyLaunchSnapshotCapturer()
+    ) {
         self.socketClient = socketClient
         self.hookQueue = hookQueue
+        self.launchSnapshotCapturer = launchSnapshotCapturer
     }
 
     public func run(arguments: [String], stdin: Data, environment: [String: String]) async -> HelperCommandResult {
@@ -48,13 +76,33 @@ public struct HelperCommandRunner: Sendable {
     }
 
     private func registerLaunch(arguments: [String]) async -> HelperCommandResult {
+        let socketURL: URL
+        let launcherID: String
         do {
             let parser = try HelperOptionParser(arguments: arguments, valuedOptions: ["--socket", "--launcher"], flags: [])
-            let socketURL = try parser.requiredURL("--socket")
-            let launcherID = try parser.required("--launcher")
-            return await sendExpectingOK(.registerLaunch(launcherID: launcherID), to: socketURL)
+            socketURL = try parser.requiredURL("--socket")
+            launcherID = try parser.required("--launcher")
         } catch {
             return usage(String(describing: error))
+        }
+
+        do {
+            let response = try await socketClient.send(.registerLaunch(launcherID: launcherID), to: socketURL)
+            guard response == .ok else {
+                return daemonFailure(response)
+            }
+            return HelperCommandResult(exitCode: 0)
+        } catch {
+            guard isQueueablePreSendConnectError(error) else {
+                return daemonUnavailable(error)
+            }
+            do {
+                let snapshot = try await launchSnapshotCapturer.captureLaunchSnapshot(launcherID: launcherID)
+                try await hookQueue.enqueue(.launchSnapshot(snapshot), forSocketAt: socketURL)
+                return HelperCommandResult(exitCode: 0, stderr: "codex-remote-helper: launch queued\n")
+            } catch {
+                return daemonUnavailable(error)
+            }
         }
     }
 
@@ -84,7 +132,7 @@ public struct HelperCommandRunner: Sendable {
                 return daemonUnavailable(error)
             }
             do {
-                try await hookQueue.enqueue(payload, forSocketAt: socketURL)
+                try await hookQueue.enqueue(.hook(payload), forSocketAt: socketURL)
                 return HelperCommandResult(exitCode: 0, stderr: "codex-remote-helper: hook queued\n")
             } catch {
                 return daemonUnavailable(error)
@@ -184,12 +232,18 @@ public struct HelperCommandRunner: Sendable {
     }
 
     private func isQueueableHookTransportError(_ error: Error) -> Bool {
+        isQueueablePreSendConnectError(error)
+    }
+
+    private func isQueueablePreSendConnectError(_ error: Error) -> Bool {
         guard let clientError = error as? LocalIPCClientError else {
             return false
         }
         switch clientError {
-        case .connectFailed, .sendFailed, .receiveFailed, .emptyResponse, .timedOut:
+        case .connectFailed, .connectTimedOut:
             return true
+        case .sendFailed, .receiveFailed, .emptyResponse, .readTimedOut:
+            return false
         }
     }
 
