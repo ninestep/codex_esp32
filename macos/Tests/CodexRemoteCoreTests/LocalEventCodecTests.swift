@@ -15,7 +15,7 @@ final class LocalEventCodecTests: XCTestCase {
         )
 
         let encoded = try codec.encode(event)
-        let decoded = try codec.decode(LocalEvent.self, from: encoded)
+        let decoded = try codec.decode(encoded)
 
         XCTAssertEqual(decoded, event)
     }
@@ -33,8 +33,34 @@ final class LocalEventCodecTests: XCTestCase {
         )
 
         let encoded = try codec.encode(event)
-        let decoded = try codec.decode(LocalEvent.self, from: encoded)
+        let decoded = try codec.decode(encoded)
 
+        XCTAssertEqual(decoded, event)
+    }
+
+    func testEncodeAllowsFrameAtMaximumSize() throws {
+        let codec = LocalEventCodec()
+        let seedEvent = makeHookEvent(lastAssistantMessage: "")
+        let seedSize = try codec.encode(seedEvent).count
+        let payloadSize = LocalEventCodec.maximumFrameBytes - seedSize
+        let event = makeHookEvent(lastAssistantMessage: String(repeating: "a", count: payloadSize))
+
+        let encoded = try codec.encode(event)
+        let decoded = try codec.decode(encoded)
+
+        XCTAssertEqual(encoded.count, LocalEventCodec.maximumFrameBytes)
+        XCTAssertEqual(decoded, event)
+    }
+
+    func testDecodeAllowsFrameAtMaximumSize() throws {
+        let codec = LocalEventCodec()
+        let event = makeHookEvent(lastAssistantMessage: "complete")
+        var encoded = try codec.encode(event)
+        encoded.append(Data(repeating: 0x20, count: LocalEventCodec.maximumFrameBytes - encoded.count))
+
+        let decoded = try codec.decode(encoded)
+
+        XCTAssertEqual(encoded.count, LocalEventCodec.maximumFrameBytes)
         XCTAssertEqual(decoded, event)
     }
 
@@ -43,7 +69,7 @@ final class LocalEventCodecTests: XCTestCase {
         let oversizedFrame = Data(repeating: 0x20, count: 65_537)
 
         do {
-            _ = try codec.decode(LocalEvent.self, from: oversizedFrame)
+            _ = try codec.decode(oversizedFrame)
             XCTFail("Expected frameTooLarge")
         } catch let error as LocalEventCodecError {
             XCTAssertEqual(error, .frameTooLarge(65_537))
@@ -80,5 +106,17 @@ final class LocalEventCodecTests: XCTestCase {
 
     func testMaximumFrameBytesIs64KiB() {
         XCTAssertEqual(LocalEventCodec.maximumFrameBytes, 64 * 1024)
+    }
+
+    private func makeHookEvent(lastAssistantMessage: String) -> LocalEvent {
+        .hookReceived(
+            HookPayload(
+                hookEventName: "Stop",
+                sessionID: "codex-99",
+                launcherInstanceID: "launch-1",
+                message: nil,
+                lastAssistantMessage: lastAssistantMessage
+            )
+        )
     }
 }

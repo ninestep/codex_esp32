@@ -9,15 +9,15 @@ public struct LocalEventCodec: Sendable {
 
     public init() {}
 
-    public func encode<T: Encodable>(_ value: T) throws -> Data {
-        let data = try JSONEncoder().encode(value)
+    public func encode(_ event: LocalEvent) throws -> Data {
+        let data = try JSONEncoder().encode(event)
         try validateFrameSize(data.count)
         return data
     }
 
-    public func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
+    public func decode(_ data: Data) throws -> LocalEvent {
         try validateFrameSize(data.count)
-        return try JSONDecoder().decode(type, from: data)
+        return try JSONDecoder().decode(LocalEvent.self, from: data)
     }
 
     private func validateFrameSize(_ size: Int) throws {
