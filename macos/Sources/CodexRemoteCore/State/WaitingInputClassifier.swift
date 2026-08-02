@@ -6,7 +6,7 @@ public enum WaitingInputClassification: Equatable, Sendable {
 }
 
 public struct WaitingInputClassifier: Sendable {
-    private let replySignals = ["请回复", "请确认", "需要你选择", "请选择", "请提供", "请授权"]
+    private let replySignals = ["请回复", "请确认", "确认后", "需要你选择", "请选择", "请提供", "请授权"]
     private let pauseSignals = ["我会继续", "才能继续", "后继续", "再继续", "之后继续"]
     private let optionalSignals = ["如果你愿意", "如有需要", "也可以继续优化"]
 

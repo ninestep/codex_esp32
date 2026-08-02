@@ -14,6 +14,11 @@ final class WaitingInputClassifierTests: XCTestCase {
         XCTAssertEqual(classifier.classify(text), .blocking(text))
     }
 
+    func testConfirmationBeforeContinueIsAmber() {
+        let text = "确认后我会继续执行。"
+        XCTAssertEqual(classifier.classify(text), .blocking(text))
+    }
+
     func testOptionalOfferIsNormalCompletion() {
         let text = "任务已经完成。如果你愿意，我也可以继续优化。"
         XCTAssertEqual(classifier.classify(text), .normal(text))
