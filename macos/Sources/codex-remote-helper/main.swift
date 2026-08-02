@@ -31,7 +31,7 @@ private func runServe(arguments: [String]) async {
 
     let socketURL = URL(fileURLWithPath: serveArguments.socketPath)
     do {
-        try ensureSocketParentDirectory(for: socketURL)
+        try SocketParentPreparer().prepareParentDirectory(for: socketURL)
     } catch {
         write("codex-remote-helper: daemon unavailable\n", to: .standardError)
         exit(69)
@@ -83,22 +83,6 @@ private func waitForTerminationSignal() async {
         install(SIGINT)
         install(SIGTERM)
     }
-}
-
-private func ensureSocketParentDirectory(for socketURL: URL) throws {
-    let parentURL = socketURL.deletingLastPathComponent()
-    var isDirectory: ObjCBool = false
-    if FileManager.default.fileExists(atPath: parentURL.path, isDirectory: &isDirectory) {
-        guard isDirectory.boolValue else {
-            throw CocoaError(.fileWriteFileExists)
-        }
-        return
-    }
-    try FileManager.default.createDirectory(
-        at: parentURL,
-        withIntermediateDirectories: true,
-        attributes: [.posixPermissions: 0o700]
-    )
 }
 
 private func write(_ string: String, to handle: FileHandle) {

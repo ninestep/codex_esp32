@@ -135,6 +135,61 @@ final class HelperCommandTests: XCTestCase {
         XCTAssertThrowsError(try HelperServeArguments.parse(["--socket", "   "]))
     }
 
+    func testSocketParentPreparerCreatesMissingParentWithOwnerOnlyPermissions() throws {
+        let root = try makeTemporaryDirectory(prefix: "socket-parent-create")
+        let socketURL = root.appendingPathComponent("missing").appendingPathComponent("events.sock")
+
+        try SocketParentPreparer().prepareParentDirectory(for: socketURL)
+
+        let status = try fileStatus(at: socketURL.deletingLastPathComponent())
+        XCTAssertEqual(status.st_mode & S_IFMT, S_IFDIR)
+        XCTAssertEqual(status.st_mode & mode_t(0o777), mode_t(0o700))
+        XCTAssertEqual(status.st_uid, geteuid())
+    }
+
+    func testSocketParentPreparerAcceptsExistingPrivateDirectory() throws {
+        let root = try makeTemporaryDirectory(prefix: "socket-parent-existing")
+        let parent = root.appendingPathComponent("private", isDirectory: true)
+        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+
+        try SocketParentPreparer().prepareParentDirectory(for: parent.appendingPathComponent("events.sock"))
+
+        XCTAssertEqual(try socketMode(at: parent), 0o700)
+    }
+
+    func testSocketParentPreparerRejectsGroupOrOtherPermissionsWithoutChangingMode() throws {
+        let root = try makeTemporaryDirectory(prefix: "socket-parent-public")
+        let parent = root.appendingPathComponent("public", isDirectory: true)
+        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o755])
+
+        XCTAssertThrowsError(try SocketParentPreparer().prepareParentDirectory(for: parent.appendingPathComponent("events.sock"))) { error in
+            XCTAssertEqual(error as? SocketParentPreparationError, .insecurePermissions(parent.path, 0o755))
+        }
+        XCTAssertEqual(try socketMode(at: parent), 0o755)
+    }
+
+    func testSocketParentPreparerRejectsSymlinkToDirectory() throws {
+        let root = try makeTemporaryDirectory(prefix: "socket-parent-symlink")
+        let target = root.appendingPathComponent("target", isDirectory: true)
+        let link = root.appendingPathComponent("link", isDirectory: true)
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
+
+        XCTAssertThrowsError(try SocketParentPreparer().prepareParentDirectory(for: link.appendingPathComponent("events.sock"))) { error in
+            XCTAssertEqual(error as? SocketParentPreparationError, .notDirectory(link.path))
+        }
+    }
+
+    func testSocketParentPreparerRejectsOrdinaryFileParent() throws {
+        let root = try makeTemporaryDirectory(prefix: "socket-parent-file")
+        let file = root.appendingPathComponent("file")
+        FileManager.default.createFile(atPath: file.path, contents: Data("not a directory".utf8))
+
+        XCTAssertThrowsError(try SocketParentPreparer().prepareParentDirectory(for: file.appendingPathComponent("events.sock"))) { error in
+            XCTAssertEqual(error as? SocketParentPreparationError, .notDirectory(file.path))
+        }
+    }
+
     func testListCommandSendsListRequestAndPrintsMachineReadableJSON() async throws {
         let session = RemoteSession(
             remoteSessionID: "remote-1",
@@ -460,13 +515,18 @@ final class HelperCommandTests: XCTestCase {
     }
 
     private func makeSocketFixture() throws -> SocketFixture {
+        let directory = try makeTemporaryDirectory(prefix: "ipc")
+        return SocketFixture(socketURL: directory.appendingPathComponent("helper.sock"))
+    }
+
+    private func makeTemporaryDirectory(prefix: String) throws -> URL {
         let directory = URL(fileURLWithPath: "/tmp", isDirectory: true)
-            .appendingPathComponent("ipc-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("\(prefix)-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
         addTeardownBlock {
             try? FileManager.default.removeItem(at: directory)
         }
-        return SocketFixture(socketURL: directory.appendingPathComponent("helper.sock"))
+        return directory
     }
 }
 
@@ -546,11 +606,15 @@ private struct SocketFixture {
 }
 
 private func socketMode(at socketURL: URL) throws -> mode_t {
+    try fileStatus(at: socketURL).st_mode & mode_t(0o777)
+}
+
+private func fileStatus(at url: URL) throws -> stat {
     var status = stat()
-    guard socketURL.path.withCString({ lstat($0, &status) }) == 0 else {
+    guard url.path.withCString({ lstat($0, &status) }) == 0 else {
         throw POSIXError(.init(rawValue: errno) ?? .EIO)
     }
-    return status.st_mode & mode_t(0o777)
+    return status
 }
 
 private final class PartialResponseServer {

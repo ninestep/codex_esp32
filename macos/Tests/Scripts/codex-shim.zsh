@@ -60,6 +60,11 @@ cat > "$REAL_CODEX" <<'EOS'
 set -euo pipefail
 
 print -r -- "${CODEX_REMOTE_INSTANCE_ID:-}" > "$REAL_ENV"
+if [[ -n "${CODEX_REMOTE_INSTANCE_ID+x}" ]]; then
+  print -r -- "set" > "${REAL_ENV_STATE:-/dev/null}"
+else
+  print -r -- "unset" > "${REAL_ENV_STATE:-/dev/null}"
+fi
 for arg in "$@"; do
   print -r -- "$arg"
 done > "$REAL_ARGS"
@@ -159,6 +164,33 @@ set -e
 [[ "$exit_status" == 0 ]] || fail "expected real codex exit 0 after helper failure, got $exit_status"
 grep -q "helper register-launch failed" "$TMP_DIR/failing-stderr" || fail "missing helper failure warning"
 grep -q "real stderr" "$TMP_DIR/failing-stderr" || fail "real stderr missing after helper failure"
+
+mkdir -p "$TMP_DIR/fake-bin"
+cat > "$TMP_DIR/fake-bin/uuidgen" <<'EOS'
+#!/bin/zsh
+exit 42
+EOS
+chmod +x "$TMP_DIR/fake-bin/uuidgen"
+set +e
+HELPER_ARGS="$TMP_DIR/uuidfail-helper-args" \
+HELPER_ENV="$TMP_DIR/uuidfail-helper-env" \
+HELPER_LAUNCHER="$TMP_DIR/uuidfail-helper-launcher" \
+REAL_ARGS="$TMP_DIR/uuidfail-real-args" \
+REAL_ENV="$TMP_DIR/uuidfail-real-env" \
+REAL_ENV_STATE="$TMP_DIR/uuidfail-real-env-state" \
+CODEX_REMOTE_HELPER="$HELPER" \
+CODEX_REMOTE_SOCKET="$SOCKET" \
+CODEX_REMOTE_REAL_CODEX="$REAL_CODEX" \
+PATH="$TMP_DIR/fake-bin:$PATH" \
+zsh "$SHIM" "uuid fail still runs" > "$TMP_DIR/uuidfail-stdout" 2> "$TMP_DIR/uuidfail-stderr"
+exit_status=$?
+set -e
+[[ "$exit_status" == 0 ]] || fail "expected real codex exit 0 after uuidgen failure, got $exit_status"
+grep -q "launcher id unavailable" "$TMP_DIR/uuidfail-stderr" || fail "missing uuidgen warning"
+grep -q "real stderr" "$TMP_DIR/uuidfail-stderr" || fail "real stderr missing after uuidgen failure"
+[[ ! -e "$TMP_DIR/uuidfail-helper-args" ]] || fail "helper should not be contacted when uuidgen fails"
+[[ -e "$TMP_DIR/uuidfail-real-env" ]] || fail "real codex did not run after uuidgen failure"
+grep -q "^unset$" "$TMP_DIR/uuidfail-real-env-state" || fail "launcher id should be unset after uuidgen failure"
 
 HOOK_INPUT='{"hook_event_name":"Stop","session_id":"codex-1"}'
 printf '%s' "$HOOK_INPUT" | env \
