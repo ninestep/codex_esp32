@@ -44,4 +44,38 @@ public struct HookPayload: Codable, Equatable, Sendable {
 public enum LocalEvent: Codable, Equatable, Sendable {
     case launchRegistered(LaunchRegistration)
     case hookReceived(HookPayload)
+
+    private enum CodingKeys: String, CodingKey {
+        case type
+        case payload
+    }
+
+    private enum EventType: String, Codable {
+        case launchRegistered
+        case hookReceived
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        switch try container.decode(EventType.self, forKey: .type) {
+        case .launchRegistered:
+            self = .launchRegistered(try container.decode(LaunchRegistration.self, forKey: .payload))
+        case .hookReceived:
+            self = .hookReceived(try container.decode(HookPayload.self, forKey: .payload))
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+
+        switch self {
+        case .launchRegistered(let registration):
+            try container.encode(EventType.launchRegistered, forKey: .type)
+            try container.encode(registration, forKey: .payload)
+        case .hookReceived(let payload):
+            try container.encode(EventType.hookReceived, forKey: .type)
+            try container.encode(payload, forKey: .payload)
+        }
+    }
 }

@@ -1096,7 +1096,7 @@ Expected: the launch, hook binding, focus, and Enter path passes through the sam
 
 - [ ] **Step 5: Add fixture-driven routing assertions**
 
-Decode the five JSON files under `macos/Fixtures/hooks` into `HookPayload`, feed them to one `SessionService`, and assert this exact sequence:
+Construct normalized `HookPayload` values from the field semantics of the five JSON files under `macos/Fixtures/hooks`, feed them to one `SessionService`, and assert this exact sequence. Do not decode the raw snake_case/env fixture JSON directly into `HookPayload`; raw snake_case/env parsing is verified by the Task9 helper mapper.
 
 ```swift
 XCTAssertEqual(states, [
