@@ -197,7 +197,7 @@ public actor UnixSocketEventServer {
     private func accept(_ connection: NWConnection) {
         guard connections.count < maximumActiveConnections else {
             connection.start(queue: queue)
-            sendResponse(.serverBusy, on: connection, requireTrackedConnection: false)
+            sendResponse(.serverBusy, on: connection, claim: .none)
             return
         }
 
@@ -233,7 +233,7 @@ public actor UnixSocketEventServer {
 
         let remainingBytes = LocalEventCodec.maximumFrameBytes + 1 - accumulated.count
         guard remainingBytes > 0 else {
-            sendResponse(.frameTooLarge, on: connection)
+            sendResponse(.frameTooLarge, on: connection, claim: .active)
             return
         }
 
@@ -273,7 +273,7 @@ public actor UnixSocketEventServer {
         }
 
         if frame.count > LocalEventCodec.maximumFrameBytes {
-            sendResponse(.frameTooLarge, on: connection)
+            sendResponse(.frameTooLarge, on: connection, claim: .active)
             return
         }
 
@@ -295,31 +295,29 @@ public actor UnixSocketEventServer {
         } catch let error as LocalEventCodecError {
             switch error {
             case .frameTooLarge:
-                sendResponse(.frameTooLarge, on: connection)
+                sendResponse(.frameTooLarge, on: connection, claim: .processing)
             }
             return
         } catch {
-            sendResponse(.invalidEvent, on: connection)
+            sendResponse(.invalidEvent, on: connection, claim: .processing)
             return
         }
 
         do {
             try await handler(event)
-            sendResponse(.ok, on: connection)
+            sendResponse(.ok, on: connection, claim: .processing)
         } catch {
-            sendResponse(.handlerFailed, on: connection)
+            sendResponse(.handlerFailed, on: connection, claim: .processing)
         }
     }
 
     private func sendResponse(
         _ response: SocketResponse,
         on connection: NWConnection,
-        requireTrackedConnection: Bool = true
+        claim: ResponseClaim
     ) {
-        if requireTrackedConnection {
-            guard claimTerminalResponse(for: connection) else {
-                return
-            }
+        guard claim == .none || claimResponse(for: connection, claim: claim) else {
+            return
         }
         connection.send(
             content: response.data,
@@ -338,7 +336,7 @@ public actor UnixSocketEventServer {
         guard connections[ObjectIdentifier(connection)] != nil else {
             return
         }
-        sendResponse(.readTimeout, on: connection)
+        sendResponse(.readTimeout, on: connection, claim: .timeout)
     }
 
     private func canReceiveFrame(from connection: NWConnection) -> Bool {
@@ -359,12 +357,23 @@ public actor UnixSocketEventServer {
         return true
     }
 
-    private func claimTerminalResponse(for connection: NWConnection) -> Bool {
+    private func claimResponse(for connection: NWConnection, claim: ResponseClaim) -> Bool {
         let identifier = ObjectIdentifier(connection)
         guard var state = connections[identifier] else {
             return false
         }
-        guard state.lifecycle.claimTerminalResponse() else {
+
+        let claimed = switch claim {
+        case .none:
+            true
+        case .active:
+            state.lifecycle.claimActiveResponse()
+        case .timeout:
+            state.lifecycle.claimTimeoutResponse()
+        case .processing:
+            state.lifecycle.claimProcessingResponse()
+        }
+        guard claimed else {
             return false
         }
         state.timeoutTask?.cancel()
@@ -381,6 +390,13 @@ public actor UnixSocketEventServer {
     private static var maximumUnixSocketPathBytes: Int {
         MemoryLayout.size(ofValue: sockaddr_un().sun_path)
     }
+}
+
+private enum ResponseClaim: Equatable {
+    case none
+    case active
+    case timeout
+    case processing
 }
 
 private struct ConnectionState {
@@ -410,8 +426,20 @@ struct ConnectionLifecycle: Sendable {
         return true
     }
 
-    mutating func claimTerminalResponse() -> Bool {
-        guard phase != .responding else {
+    mutating func claimActiveResponse() -> Bool {
+        guard phase == .active else {
+            return false
+        }
+        phase = .responding
+        return true
+    }
+
+    mutating func claimTimeoutResponse() -> Bool {
+        claimActiveResponse()
+    }
+
+    mutating func claimProcessingResponse() -> Bool {
+        guard phase == .processing else {
             return false
         }
         phase = .responding

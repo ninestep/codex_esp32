@@ -183,9 +183,19 @@ final class UnixSocketEventServerTests: XCTestCase {
     func testConnectionLifecycleIgnoresCompleteFrameAfterTimeoutResponseIsClaimed() {
         var lifecycle = ConnectionLifecycle()
 
-        XCTAssertTrue(lifecycle.claimTerminalResponse())
+        XCTAssertTrue(lifecycle.claimTimeoutResponse())
         XCTAssertFalse(lifecycle.claimFrameProcessing())
-        XCTAssertFalse(lifecycle.claimTerminalResponse())
+        XCTAssertFalse(lifecycle.claimProcessingResponse())
+        XCTAssertFalse(lifecycle.claimTimeoutResponse())
+    }
+
+    func testConnectionLifecycleRejectsTimeoutAfterFrameProcessingHasStarted() {
+        var lifecycle = ConnectionLifecycle()
+
+        XCTAssertTrue(lifecycle.claimFrameProcessing())
+        XCTAssertFalse(lifecycle.claimTimeoutResponse())
+        XCTAssertTrue(lifecycle.claimProcessingResponse())
+        XCTAssertFalse(lifecycle.claimProcessingResponse())
     }
 
     func testTimedOutConnectionDoesNotProcessLateCompleteFrameOrSendSecondResponse() async throws {
