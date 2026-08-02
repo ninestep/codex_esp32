@@ -1,0 +1,14 @@
+#!/bin/zsh
+set -u
+
+script_path=${0:A}
+macos_dir=${script_path:h:h}
+helper=${CODEX_REMOTE_HELPER:-"$macos_dir/.build/debug/codex-remote-helper"}
+socket_path=${CODEX_REMOTE_SOCKET:-"${TMPDIR:-/tmp}/codex-remote-helper.sock"}
+
+if [[ ! -x "$helper" ]]; then
+  print -u2 -r -- "codex remote hook: helper unavailable"
+  exit 69
+fi
+
+exec "$helper" hook --socket "$socket_path"

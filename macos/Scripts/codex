@@ -1,0 +1,47 @@
+#!/bin/zsh
+set -u
+
+script_path=${0:A}
+macos_dir=${script_path:h:h}
+helper=${CODEX_REMOTE_HELPER:-"$macos_dir/.build/debug/codex-remote-helper"}
+socket_path=${CODEX_REMOTE_SOCKET:-"${TMPDIR:-/tmp}/codex-remote-helper.sock"}
+
+find_real_codex() {
+  if [[ -n "${CODEX_REMOTE_REAL_CODEX:-}" ]]; then
+    if [[ -x "$CODEX_REMOTE_REAL_CODEX" ]]; then
+      print -r -- "$CODEX_REMOTE_REAL_CODEX"
+      return 0
+    fi
+    return 1
+  fi
+
+  local self_path=${script_path:A}
+  local dir candidate
+  for dir in "${(@s/:/)PATH}"; do
+    [[ -n "$dir" ]] || dir="."
+    candidate="$dir/codex"
+    if [[ -x "$candidate" && "${candidate:A}" != "$self_path" ]]; then
+      print -r -- "${candidate:A}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+real_codex=$(find_real_codex) || {
+  print -u2 -r -- "codex shim: real codex not found"
+  exit 127
+}
+
+launcher_id=${$(uuidgen):l}
+export CODEX_REMOTE_INSTANCE_ID="$launcher_id"
+
+if [[ -x "$helper" ]]; then
+  "$helper" register-launch --socket "$socket_path" --launcher "$launcher_id" || {
+    print -u2 -r -- "codex shim: helper register-launch failed"
+  }
+else
+  print -u2 -r -- "codex shim: helper unavailable"
+fi
+
+exec "$real_codex" "$@"
