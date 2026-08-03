@@ -238,28 +238,61 @@ final class UnixSocketEventServerTests: XCTestCase {
     func testConnectionLimitReturnsServerBusyAndKeepsExistingServerUsable() async throws {
         let socketURL = try makeSocketFixture().socketURL
         let recorder = EventRecorder()
+        let slotGate = BlockingEventGate()
         let server = UnixSocketEventServer(
             socketURL: socketURL,
             maximumActiveConnections: 2,
             frameReadTimeout: .seconds(5),
             handler: { event in
-                await recorder.record(event)
+                if isSlotOccupyingEvent(event) {
+                    await slotGate.recordAndBlock(event)
+                } else {
+                    await recorder.record(event)
+                }
             }
         )
         try await server.start()
 
-        let firstIdleClient = try openConnectedClient(to: socketURL)
-        let secondIdleClient = try openConnectedClient(to: socketURL)
+        var slotClients: [Int32] = []
         defer {
-            close(secondIdleClient)
+            Task {
+                await slotGate.release()
+            }
+            for slotClient in slotClients {
+                close(slotClient)
+            }
         }
+        let codec = LocalEventCodec()
+        for index in 1...2 {
+            let slotClient = try openConnectedClient(to: socketURL)
+            slotClients.append(slotClient)
+            let slotEvent = LocalEvent.launchRegistered(
+                LaunchRegistration(
+                    launcherInstanceID: "slot-\(index)",
+                    terminalTargetID: "terminal-slot-\(index)",
+                    displayTitle: "Slot \(index)",
+                    workingDirectoryLabel: "~/slot-\(index)"
+                )
+            )
+            try writeAll(try codec.encode(slotEvent), to: slotClient)
+            guard shutdown(slotClient, SHUT_WR) == 0 else {
+                throw POSIXClientError.systemCall("shutdown", errno)
+            }
+        }
+        await slotGate.waitForBlockedCount(2)
 
         let busyClient = try openConnectedClient(to: socketURL)
         let busyResult = try await waitForServerBusy(from: busyClient, to: socketURL)
 
         XCTAssertEqual(busyResult.response, SocketResponse(ok: false, error: "server_busy"))
 
-        close(firstIdleClient)
+        await slotGate.release()
+        while !slotClients.isEmpty {
+            let slotClient = slotClients.removeLast()
+            let slotResponse = try await readResponse(from: slotClient)
+            XCTAssertEqual(slotResponse.response, SocketResponse(ok: true, error: nil))
+            close(slotClient)
+        }
         let event = LocalEvent.launchRegistered(
             LaunchRegistration(
                 launcherInstanceID: "after-busy",
@@ -348,6 +381,64 @@ private actor EventRecorder {
     func events() -> [LocalEvent] {
         recordedEvents
     }
+}
+
+private actor BlockingEventGate {
+    private var blockedEvents: [LocalEvent] = []
+    private var blockedCountWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
+    private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+    private var isReleased = false
+
+    func recordAndBlock(_ event: LocalEvent) async {
+        blockedEvents.append(event)
+        resumeBlockedCountWaiters()
+        if isReleased {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            releaseWaiters.append(continuation)
+        }
+    }
+
+    func waitForBlockedCount(_ target: Int) async {
+        if blockedEvents.count >= target {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            blockedCountWaiters.append((target, continuation))
+        }
+    }
+
+    func release() {
+        guard !isReleased else {
+            return
+        }
+        isReleased = true
+        let waiters = releaseWaiters
+        releaseWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
+    }
+
+    private func resumeBlockedCountWaiters() {
+        var remaining: [(Int, CheckedContinuation<Void, Never>)] = []
+        for waiter in blockedCountWaiters {
+            if blockedEvents.count >= waiter.0 {
+                waiter.1.resume()
+            } else {
+                remaining.append(waiter)
+            }
+        }
+        blockedCountWaiters = remaining
+    }
+}
+
+private func isSlotOccupyingEvent(_ event: LocalEvent) -> Bool {
+    guard case .launchRegistered(let registration) = event else {
+        return false
+    }
+    return registration.launcherInstanceID.hasPrefix("slot-")
 }
 
 private enum HandlerFailure: Error {
@@ -454,17 +545,38 @@ private func sendFrameEventually(
 ) async throws -> SocketExchangeResult {
     let deadline = Date().addingTimeInterval(3)
     var lastResult: SocketExchangeResult?
+    var lastRetryableError: Error?
 
     while Date() < deadline {
-        let result = try await sendFrame(frame, to: socketURL)
-        if result.response == expected {
-            return result
+        do {
+            let result = try await sendFrame(frame, to: socketURL)
+            if result.response == expected {
+                return result
+            }
+            lastResult = result
+        } catch {
+            guard isRetryableTemporaryReadError(error) else {
+                throw error
+            }
+            lastRetryableError = error
         }
-        lastResult = result
         try await Task.sleep(for: .milliseconds(10))
     }
 
+    if let lastResult {
+        return lastResult
+    }
+    if let lastRetryableError {
+        throw lastRetryableError
+    }
     return try XCTUnwrap(lastResult)
+}
+
+private func isRetryableTemporaryReadError(_ error: Error) -> Bool {
+    guard case POSIXClientError.systemCall("read", let code) = error else {
+        return false
+    }
+    return code == EAGAIN || code == EWOULDBLOCK
 }
 
 private func waitForServerBusy(from firstClient: Int32, to socketURL: URL) async throws -> SocketExchangeResult {
@@ -475,12 +587,17 @@ private func waitForServerBusy(from firstClient: Int32, to socketURL: URL) async
         }
     }
 
-    let deadline = Date().addingTimeInterval(3)
+    let deadline = Date().addingTimeInterval(10)
+    var lastRetryableError: Error?
     while Date() < deadline {
         let currentClient = try XCTUnwrap(client)
         do {
             return try await readResponse(from: currentClient)
-        } catch POSIXClientError.systemCall("read", EAGAIN) {
+        } catch {
+            guard isRetryableTemporaryReadError(error) else {
+                throw error
+            }
+            lastRetryableError = error
             close(currentClient)
             client = nil
             try await Task.sleep(for: .milliseconds(10))
@@ -488,6 +605,9 @@ private func waitForServerBusy(from firstClient: Int32, to socketURL: URL) async
         }
     }
 
+    if let lastRetryableError {
+        throw lastRetryableError
+    }
     return try await readResponse(from: try XCTUnwrap(client))
 }
 
@@ -594,7 +714,11 @@ private func readUntilEOF(from fileDescriptor: Int32) throws -> Data {
             read(fileDescriptor, rawBuffer.baseAddress, rawBuffer.count)
         }
         if bytesRead < 0 {
-            throw POSIXClientError.systemCall("read", errno)
+            let errorCode = errno
+            if errorCode == EINTR {
+                continue
+            }
+            throw POSIXClientError.systemCall("read", errorCode)
         }
         if bytesRead == 0 {
             return data
