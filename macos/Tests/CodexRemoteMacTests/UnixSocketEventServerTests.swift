@@ -239,6 +239,9 @@ final class UnixSocketEventServerTests: XCTestCase {
         let socketURL = try makeSocketFixture().socketURL
         let recorder = EventRecorder()
         let slotGate = BlockingEventGate()
+        addTeardownBlock {
+            await slotGate.release()
+        }
         let server = UnixSocketEventServer(
             socketURL: socketURL,
             maximumActiveConnections: 2,
@@ -255,9 +258,6 @@ final class UnixSocketEventServerTests: XCTestCase {
 
         var slotClients: [Int32] = []
         defer {
-            Task {
-                await slotGate.release()
-            }
             for slotClient in slotClients {
                 close(slotClient)
             }
@@ -266,20 +266,13 @@ final class UnixSocketEventServerTests: XCTestCase {
         for index in 1...2 {
             let slotClient = try openConnectedClient(to: socketURL)
             slotClients.append(slotClient)
-            let slotEvent = LocalEvent.launchRegistered(
-                LaunchRegistration(
-                    launcherInstanceID: "slot-\(index)",
-                    terminalTargetID: "terminal-slot-\(index)",
-                    displayTitle: "Slot \(index)",
-                    workingDirectoryLabel: "~/slot-\(index)"
-                )
-            )
+            let slotEvent = slotOccupyingEvent(index: index)
             try writeAll(try codec.encode(slotEvent), to: slotClient)
             guard shutdown(slotClient, SHUT_WR) == 0 else {
                 throw POSIXClientError.systemCall("shutdown", errno)
             }
         }
-        await slotGate.waitForBlockedCount(2)
+        try await slotGate.waitForBlockedCount(2)
 
         let busyClient = try openConnectedClient(to: socketURL)
         let busyResult = try await waitForServerBusy(from: busyClient, to: socketURL)
@@ -311,6 +304,35 @@ final class UnixSocketEventServerTests: XCTestCase {
         XCTAssertEqual(recordedEvents, [event])
 
         await server.stop()
+    }
+
+    func testBlockingEventGateWaitForBlockedCountTimesOutAndReturnsAfterTargetReached() async throws {
+        let gate = BlockingEventGate()
+        addTeardownBlock {
+            await gate.release()
+        }
+
+        do {
+            try await gate.waitForBlockedCount(
+                1,
+                timeout: .milliseconds(20),
+                pollInterval: .milliseconds(5)
+            )
+            XCTFail("Expected timedOut")
+        } catch {
+            XCTAssertEqual(error as? TestTimeoutError, .timedOut)
+        }
+
+        let blockingTask = Task {
+            await gate.recordAndBlock(slotOccupyingEvent(index: 1))
+        }
+        try await gate.waitForBlockedCount(
+            1,
+            timeout: .milliseconds(100),
+            pollInterval: .milliseconds(5)
+        )
+        await gate.release()
+        await blockingTask.value
     }
 
     func testStartThrowsExplicitLifecycleAndPathErrors() async throws {
@@ -385,13 +407,11 @@ private actor EventRecorder {
 
 private actor BlockingEventGate {
     private var blockedEvents: [LocalEvent] = []
-    private var blockedCountWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
     private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
     private var isReleased = false
 
     func recordAndBlock(_ event: LocalEvent) async {
         blockedEvents.append(event)
-        resumeBlockedCountWaiters()
         if isReleased {
             return
         }
@@ -400,12 +420,18 @@ private actor BlockingEventGate {
         }
     }
 
-    func waitForBlockedCount(_ target: Int) async {
-        if blockedEvents.count >= target {
-            return
-        }
-        await withCheckedContinuation { continuation in
-            blockedCountWaiters.append((target, continuation))
+    func waitForBlockedCount(
+        _ target: Int,
+        timeout: ContinuousClock.Duration = .seconds(3),
+        pollInterval: ContinuousClock.Duration = .milliseconds(10)
+    ) async throws {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        while blockedEvents.count < target {
+            if clock.now >= deadline {
+                throw TestTimeoutError.timedOut
+            }
+            try await clock.sleep(for: pollInterval)
         }
     }
 
@@ -420,18 +446,6 @@ private actor BlockingEventGate {
             waiter.resume()
         }
     }
-
-    private func resumeBlockedCountWaiters() {
-        var remaining: [(Int, CheckedContinuation<Void, Never>)] = []
-        for waiter in blockedCountWaiters {
-            if blockedEvents.count >= waiter.0 {
-                waiter.1.resume()
-            } else {
-                remaining.append(waiter)
-            }
-        }
-        blockedCountWaiters = remaining
-    }
 }
 
 private func isSlotOccupyingEvent(_ event: LocalEvent) -> Bool {
@@ -439,6 +453,17 @@ private func isSlotOccupyingEvent(_ event: LocalEvent) -> Bool {
         return false
     }
     return registration.launcherInstanceID.hasPrefix("slot-")
+}
+
+private func slotOccupyingEvent(index: Int) -> LocalEvent {
+    .launchRegistered(
+        LaunchRegistration(
+            launcherInstanceID: "slot-\(index)",
+            terminalTargetID: "terminal-slot-\(index)",
+            displayTitle: "Slot \(index)",
+            workingDirectoryLabel: "~/slot-\(index)"
+        )
+    )
 }
 
 private enum HandlerFailure: Error {
