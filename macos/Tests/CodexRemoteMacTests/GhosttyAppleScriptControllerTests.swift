@@ -72,7 +72,8 @@ final class GhosttyAppleScriptControllerTests: XCTestCase {
         let scripts = await runner.scripts
         XCTAssertEqual(scripts.count, 1)
         assertUsesGhosttyBundleID(scripts[0])
-        XCTAssertTrue(scripts[0].contains("return (id of targetTerm) & tab & (working directory of targetTerm) & tab & (name of targetTerm)"))
+        XCTAssertTrue(scripts[0].contains("return (id of targetTerm) & (ASCII character 9) & (working directory of targetTerm) & (ASCII character 9) & (name of targetTerm)"))
+        XCTAssertFalse(scripts[0].contains(" & tab & "))
     }
 
     func testCaptureRejectsMalformedFocusedTerminalResponse() async throws {

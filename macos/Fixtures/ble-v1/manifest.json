@@ -1,0 +1,112 @@
+{
+  "byteOrder" : "little",
+  "crc" : "CRC32/IEEE",
+  "protocolMajor" : 1,
+  "protocolMinor" : 0,
+  "vectors" : [
+    {
+      "file" : "empty-action-result.hex",
+      "kind" : "envelope",
+      "messageType" : "actionResult",
+      "name" : "empty-action-result",
+      "outcome" : "valid",
+      "sequence" : 0
+    },
+    {
+      "file" : "select-session.hex",
+      "kind" : "envelope",
+      "messageType" : "selectSession",
+      "name" : "select-session",
+      "outcome" : "valid",
+      "sequence" : 1
+    },
+    {
+      "file" : "terminal-enter.hex",
+      "kind" : "envelope",
+      "messageType" : "terminalKey",
+      "name" : "terminal-enter",
+      "outcome" : "valid",
+      "sequence" : 2
+    },
+    {
+      "file" : "snapshot-four.hex",
+      "kind" : "envelope",
+      "messageType" : "stateSnapshot",
+      "name" : "snapshot-four",
+      "outcome" : "valid",
+      "sequence" : 3
+    },
+    {
+      "file" : "snapshot-eight.hex",
+      "kind" : "envelope",
+      "messageType" : "stateSnapshot",
+      "name" : "snapshot-eight",
+      "outcome" : "valid",
+      "sequence" : 4
+    },
+    {
+      "file" : "state-delta.hex",
+      "kind" : "envelope",
+      "messageType" : "stateDelta",
+      "name" : "state-delta",
+      "outcome" : "valid",
+      "sequence" : 5
+    },
+    {
+      "file" : "adpcm-silence.hex",
+      "kind" : "envelope",
+      "messageType" : "audioFrame",
+      "name" : "adpcm-silence",
+      "outcome" : "valid",
+      "sequence" : 6
+    },
+    {
+      "file" : "asset-manifest.hex",
+      "kind" : "envelope",
+      "messageType" : "assetManifest",
+      "name" : "asset-manifest",
+      "outcome" : "valid",
+      "sequence" : 7
+    },
+    {
+      "file" : "asset-chunk.hex",
+      "kind" : "envelope",
+      "messageType" : "assetChunk",
+      "name" : "asset-chunk",
+      "outcome" : "valid",
+      "sequence" : 8
+    },
+    {
+      "file" : "device-info.hex",
+      "kind" : "envelope",
+      "messageType" : "deviceInfo",
+      "name" : "device-info",
+      "outcome" : "valid",
+      "sequence" : 9
+    },
+    {
+      "file" : "bad-crc.hex",
+      "kind" : "envelope",
+      "messageType" : "selectSession",
+      "name" : "bad-crc",
+      "outcome" : "crcMismatch",
+      "sequence" : 10
+    },
+    {
+      "file" : "incompatible-major.hex",
+      "kind" : "envelope",
+      "messageType" : "selectSession",
+      "name" : "incompatible-major",
+      "outcome" : "incompatibleMajor",
+      "sequence" : 11
+    },
+    {
+      "file" : "two-fragment-message.hex",
+      "kind" : "fragmentSet",
+      "messageType" : "selectSession",
+      "name" : "two-fragment-message",
+      "outcome" : "valid",
+      "sequence" : 12
+    }
+  ]
+}

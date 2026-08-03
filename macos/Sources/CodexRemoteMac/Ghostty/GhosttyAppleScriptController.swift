@@ -20,7 +20,7 @@ public struct GhosttyAppleScriptController: TerminalController, Sendable {
             if frontmost is false then error "Ghostty is not frontmost"
             set targetTab to selected tab of front window
             set targetTerm to focused terminal of targetTab
-            return (id of targetTerm) & tab & (working directory of targetTerm) & tab & (name of targetTerm)
+            return (id of targetTerm) & (ASCII character 9) & (working directory of targetTerm) & (ASCII character 9) & (name of targetTerm)
         end tell
         """)
         let fields = output.components(separatedBy: "\t")
