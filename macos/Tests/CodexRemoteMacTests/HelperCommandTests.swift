@@ -378,6 +378,123 @@ final class HelperCommandTests: XCTestCase {
         )
     }
 
+    func testSessionIPCDispatcherRecordsAcceptedDirectHookOnlyAfterSuccess() async throws {
+        let accepted = AcceptedHookRecorder()
+        let service = SessionService(controller: HelperRecordingTerminalController(), idGenerator: { "remote-1" })
+        let dispatcher = SessionIPCDispatcher(service: service, onHookAccepted: { eventName in
+            Task {
+                await accepted.record(eventName)
+            }
+        })
+
+        let failed = await dispatcher.handle(.hook(HookPayload(
+            hookEventName: "Stop",
+            sessionID: "missing-session",
+            launcherInstanceID: nil,
+            message: nil,
+            lastAssistantMessage: nil
+        )))
+        let register = await dispatcher.handle(.registerLaunch(launcherID: "launcher-1"))
+        let succeeded = await dispatcher.handle(.hook(HookPayload(
+            hookEventName: "SessionStart",
+            sessionID: "codex-1",
+            launcherInstanceID: "launcher-1",
+            message: nil,
+            lastAssistantMessage: nil
+        )))
+        try await Task.sleep(for: .milliseconds(20))
+
+        XCTAssertEqual(failed, .error(code: .handlerFailed))
+        XCTAssertEqual(register, .ok)
+        XCTAssertEqual(succeeded, .ok)
+        let acceptedEvents = await accepted.events()
+        XCTAssertEqual(acceptedEvents, ["SessionStart"])
+    }
+
+    func testSessionIPCDispatcherDoesNotRecordUnknownDirectHookEvent() async throws {
+        let accepted = AcceptedHookRecorder()
+        let service = SessionService(controller: HelperRecordingTerminalController(), idGenerator: { "remote-1" })
+        let dispatcher = SessionIPCDispatcher(service: service, onHookAccepted: { eventName in
+            Task {
+                await accepted.record(eventName)
+            }
+        })
+
+        let response = await dispatcher.handle(.hook(HookPayload(
+            hookEventName: "UnknownEvent",
+            sessionID: "codex-unknown",
+            launcherInstanceID: nil,
+            message: nil,
+            lastAssistantMessage: nil
+        )))
+        try await Task.sleep(for: .milliseconds(20))
+
+        XCTAssertEqual(response, .ok)
+        let acceptedEvents = await accepted.events()
+        XCTAssertEqual(acceptedEvents, [])
+    }
+
+    func testSessionIPCDispatcherRecordsAcceptedPendingHookOnlyAfterSuccess() async throws {
+        let accepted = AcceptedHookRecorder()
+        let service = SessionService(controller: HelperRecordingTerminalController(), idGenerator: { "remote-1" })
+        let dispatcher = SessionIPCDispatcher(service: service, onHookAccepted: { eventName in
+            Task {
+                await accepted.record(eventName)
+            }
+        })
+
+        let failed = await dispatcher.handlePending(.hook(HookPayload(
+            hookEventName: "Stop",
+            sessionID: "missing-session",
+            launcherInstanceID: nil,
+            message: nil,
+            lastAssistantMessage: nil
+        )))
+        let launch = await dispatcher.handlePending(.launchSnapshot(LaunchRegistration(
+            launcherInstanceID: "launcher-1",
+            terminalTargetID: "term-7",
+            displayTitle: "ESP32",
+            workingDirectoryLabel: "esp32"
+        )))
+        let succeeded = await dispatcher.handlePending(.hook(HookPayload(
+            hookEventName: "SessionStart",
+            sessionID: "codex-1",
+            launcherInstanceID: "launcher-1",
+            message: nil,
+            lastAssistantMessage: nil
+        )))
+        try await Task.sleep(for: .milliseconds(20))
+
+        XCTAssertEqual(failed, .error(code: .handlerFailed))
+        XCTAssertEqual(launch, .ok)
+        XCTAssertEqual(succeeded, .ok)
+        let acceptedEvents = await accepted.events()
+        XCTAssertEqual(acceptedEvents, ["SessionStart"])
+    }
+
+    func testSessionIPCDispatcherDoesNotRecordUnknownPendingHookEvent() async throws {
+        let accepted = AcceptedHookRecorder()
+        let service = SessionService(controller: HelperRecordingTerminalController(), idGenerator: { "remote-1" })
+        let dispatcher = SessionIPCDispatcher(service: service, onHookAccepted: { eventName in
+            Task {
+                await accepted.record(eventName)
+            }
+        })
+
+        let response = await dispatcher.handlePending(.hook(HookPayload(
+            hookEventName: "UnknownEvent",
+            sessionID: "codex-unknown",
+            launcherInstanceID: nil,
+            message: nil,
+            lastAssistantMessage: nil
+        )))
+        try await Task.sleep(for: .milliseconds(20))
+
+        XCTAssertEqual(response, .ok)
+        let acceptedEvents = await accepted.events()
+        XCTAssertEqual(acceptedEvents, [])
+    }
+
     func testSessionIPCDispatcherReturnsFixedErrorCodeWithoutLeakingServiceError() async {
         let dispatcher = SessionIPCDispatcher(
             service: SessionService(controller: HelperRecordingTerminalController(), idGenerator: { "remote-1" })
@@ -539,6 +656,18 @@ private actor IPCRequestRecorder {
 
     func recordedRequests() -> [LocalIPCRequest] {
         requests
+    }
+}
+
+private actor AcceptedHookRecorder {
+    private var acceptedEvents: [String] = []
+
+    func record(_ eventName: String) {
+        acceptedEvents.append(eventName)
+    }
+
+    func events() -> [String] {
+        acceptedEvents
     }
 }
 

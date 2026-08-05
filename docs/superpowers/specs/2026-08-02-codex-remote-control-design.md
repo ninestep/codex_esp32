@@ -303,6 +303,18 @@ Mac App 需要：
 | `AssetToDevice` | Mac → 设备 | JPEG 分块和清单 | write without response；通过 `ControlToHost` 分块确认 + CRC |
 | `DeviceInfo` | 设备 → Mac | 协议、固件、能力和电量 | read；变化时 notify |
 
+BLE v1 固定使用一个 128-bit service 和六个 128-bit characteristic UUID：
+
+| GATT 项 | UUID |
+| --- | --- |
+| Service | `7D2E0000-7C6A-4E6D-A3E1-9F6B4C520001` |
+| ControlToHost | `7D2E0001-7C6A-4E6D-A3E1-9F6B4C520001` |
+| ControlToDevice | `7D2E0002-7C6A-4E6D-A3E1-9F6B4C520001` |
+| StateToDevice | `7D2E0003-7C6A-4E6D-A3E1-9F6B4C520001` |
+| AudioToHost | `7D2E0004-7C6A-4E6D-A3E1-9F6B4C520001` |
+| AssetToDevice | `7D2E0005-7C6A-4E6D-A3E1-9F6B4C520001` |
+| DeviceInfo | `7D2E0006-7C6A-4E6D-A3E1-9F6B4C520001` |
+
 `ControlToHost` 和 `ControlToDevice` 分开定义，避免把 central 写入与 peripheral notification 混为一条方向不明确的通道。所有需要严格确认的动作都携带 `request_id`；滚动和过期音频允许按序号丢弃。
 
 ### 9.3 Envelope

@@ -12,6 +12,7 @@ cleanup() {
 trap cleanup EXIT
 
 if ! BLE_FIXTURE_OUTPUT_DIR="$generated_dir/output" swift test \
+  --disable-sandbox \
   --package-path "$repo_root/macos" \
   --filter BLEGoldenFixtureTests/testGenerateFixtures >"$log_file" 2>&1; then
   cat "$log_file" >&2

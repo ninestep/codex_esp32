@@ -3,9 +3,17 @@ import Foundation
 
 public struct SessionIPCDispatcher: Sendable {
     private let service: SessionService
+    private let onSessionsChanged: @Sendable () async -> Void
+    private let onHookAccepted: @Sendable (String) -> Void
 
-    public init(service: SessionService) {
+    public init(
+        service: SessionService,
+        onSessionsChanged: @escaping @Sendable () async -> Void = {},
+        onHookAccepted: @escaping @Sendable (String) -> Void = { _ in }
+    ) {
         self.service = service
+        self.onSessionsChanged = onSessionsChanged
+        self.onHookAccepted = onHookAccepted
     }
 
     public func handle(_ request: LocalIPCRequest) async -> LocalIPCResponse {
@@ -13,14 +21,20 @@ public struct SessionIPCDispatcher: Sendable {
             switch request {
             case .registerLaunch(let launcherID):
                 _ = try await service.registerFocusedLaunch(launcherInstanceID: launcherID)
+                await onSessionsChanged()
                 return .ok
             case .hook(let payload):
                 _ = try await service.receiveHook(payload)
+                await onSessionsChanged()
+                if ManagedHookEvent(rawValue: payload.hookEventName) != nil {
+                    onHookAccepted(payload.hookEventName)
+                }
                 return .ok
             case .list:
                 return .sessions(await service.activeSessions(limit: 8))
             case .focus(let remoteSessionID):
                 _ = try await service.selectSession(remoteSessionID: remoteSessionID)
+                await onSessionsChanged()
                 return .ok
             case .scroll(let remoteSessionID, let deltaY):
                 try await service.scroll(deltaY: deltaY, remoteSessionID: remoteSessionID)
@@ -39,9 +53,14 @@ public struct SessionIPCDispatcher: Sendable {
             switch event {
             case .launchSnapshot(let snapshot):
                 _ = try await service.registerLaunchSnapshot(snapshot)
+                await onSessionsChanged()
                 return .ok
             case .hook(let payload):
                 _ = try await service.receiveHook(payload)
+                await onSessionsChanged()
+                if ManagedHookEvent(rawValue: payload.hookEventName) != nil {
+                    onHookAccepted(payload.hookEventName)
+                }
                 return .ok
             }
         } catch {

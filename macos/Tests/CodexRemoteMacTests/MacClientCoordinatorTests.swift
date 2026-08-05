@@ -1,0 +1,279 @@
+import CodexRemoteCore
+import Foundation
+import XCTest
+@testable import CodexRemoteMac
+
+@MainActor
+final class MacClientCoordinatorTests: XCTestCase {
+    func testDeviceInfoStartsSessionSnapshot() async throws {
+        let session = makeSession(id: "remote-1", state: .working)
+        let service = SessionClientSpy(sessions: [session])
+        let transport = BluetoothTransportSpy(maximumWriteValueLength: 64)
+        let coordinator = MacClientCoordinator(sessionClient: service, transport: transport)
+
+        try await coordinator.receive(message: .deviceInfo(deviceInfo()))
+
+        let messages = try transport.decodedMessages()
+        XCTAssertEqual(messages, [
+            .stateSnapshot(generation: 1, sessions: [DeviceSession(
+                remoteSession: session,
+                sessionKey: 1,
+                capabilities: [.scroll, .terminalKeys, .ptt]
+            )]),
+        ])
+    }
+
+    func testSelectFocusesSessionAndReturnsSuccess() async throws {
+        let service = SessionClientSpy(sessions: [makeSession(id: "remote-1")])
+        let transport = BluetoothTransportSpy(maximumWriteValueLength: 64)
+        let coordinator = MacClientCoordinator(sessionClient: service, transport: transport)
+        try await coordinator.receive(message: .deviceInfo(deviceInfo()))
+        transport.removeAllPackets()
+
+        try await coordinator.receive(message: .selectSession(requestID: 11, sessionKey: 1))
+
+        let selectedSessionIDs = await service.selectedSessionIDs()
+        XCTAssertEqual(selectedSessionIDs, ["remote-1"])
+        XCTAssertEqual(try transport.decodedMessages(), [
+            .actionResult(requestID: 11, result: .success, detail: ""),
+        ])
+    }
+
+    func testTerminalKeyRequiresSelectedSessionAndMapsEnterAndEscape() async throws {
+        let service = SessionClientSpy(sessions: [makeSession(id: "remote-1")])
+        let transport = BluetoothTransportSpy(maximumWriteValueLength: 64)
+        let coordinator = MacClientCoordinator(sessionClient: service, transport: transport)
+        try await coordinator.receive(message: .deviceInfo(deviceInfo()))
+        transport.removeAllPackets()
+
+        try await coordinator.receive(message: .terminalKey(requestID: 20, sessionKey: 1, key: .enter))
+        try await coordinator.receive(message: .selectSession(requestID: 21, sessionKey: 1))
+        try await coordinator.receive(message: .terminalKey(requestID: 22, sessionKey: 1, key: .enter))
+        try await coordinator.receive(message: .terminalKey(requestID: 23, sessionKey: 1, key: .escape))
+
+        let sentKeys = await service.sentKeys()
+        XCTAssertEqual(sentKeys, [
+            SentKey(key: .enter, remoteSessionID: "remote-1"),
+            SentKey(key: .escape, remoteSessionID: "remote-1"),
+        ])
+        XCTAssertEqual(try transport.decodedMessages(), [
+            .actionResult(requestID: 20, result: .invalidState, detail: "请先进入会话"),
+            .actionResult(requestID: 21, result: .success, detail: ""),
+            .actionResult(requestID: 22, result: .success, detail: ""),
+            .actionResult(requestID: 23, result: .success, detail: ""),
+        ])
+    }
+
+    func testDuplicateRequestReturnsCachedResultWithoutRepeatingAction() async throws {
+        let service = SessionClientSpy(sessions: [makeSession(id: "remote-1")])
+        let transport = BluetoothTransportSpy(maximumWriteValueLength: 64)
+        let coordinator = MacClientCoordinator(sessionClient: service, transport: transport)
+        try await coordinator.receive(message: .deviceInfo(deviceInfo()))
+        transport.removeAllPackets()
+
+        try await coordinator.receive(message: .selectSession(requestID: 30, sessionKey: 1))
+        try await coordinator.receive(message: .selectSession(requestID: 30, sessionKey: 1))
+
+        let selectedSessionIDs = await service.selectedSessionIDs()
+        XCTAssertEqual(selectedSessionIDs, ["remote-1"])
+        XCTAssertEqual(try transport.decodedMessages(), [
+            .actionResult(requestID: 30, result: .success, detail: ""),
+            .actionResult(requestID: 30, result: .success, detail: ""),
+        ])
+    }
+
+    func testSelectedSessionScrollIgnoresDuplicateSequence() async throws {
+        let service = SessionClientSpy(sessions: [makeSession(id: "remote-1")])
+        let transport = BluetoothTransportSpy(maximumWriteValueLength: 64)
+        let coordinator = MacClientCoordinator(sessionClient: service, transport: transport)
+        try await coordinator.receive(message: .deviceInfo(deviceInfo()))
+        try await coordinator.receive(message: .selectSession(requestID: 40, sessionKey: 1))
+
+        try await coordinator.receive(message: .scroll(sessionKey: 1, delta: 120, sequence: 7))
+        try await coordinator.receive(message: .scroll(sessionKey: 1, delta: 120, sequence: 7))
+
+        let scrolls = await service.scrolls()
+        XCTAssertEqual(scrolls, [ScrollAction(deltaY: 120, remoteSessionID: "remote-1")])
+    }
+
+    func testPTTRequiresSelectedSessionThenForwardsAudioAndEnds() async throws {
+        let service = SessionClientSpy(sessions: [makeSession(id: "remote-1")])
+        let transport = BluetoothTransportSpy(maximumWriteValueLength: 64)
+        let audio = AudioInputSpy()
+        let coordinator = MacClientCoordinator(
+            sessionClient: service,
+            transport: transport,
+            audioInput: audio
+        )
+        try await coordinator.receive(message: .deviceInfo(deviceInfo()))
+        transport.removeAllPackets()
+
+        try await coordinator.receive(message: .pttBegin(requestID: 50, sessionKey: 1, firstAudioSequence: 10))
+        try await coordinator.receive(message: .selectSession(requestID: 51, sessionKey: 1))
+        try await coordinator.receive(message: .pttBegin(requestID: 52, sessionKey: 1, firstAudioSequence: 10))
+        let frame = ADPCMFrame(
+            sequence: 10,
+            sampleTimestamp: 1,
+            predictor: 0,
+            stepIndex: 0,
+            sampleCount: 1,
+            encodedSamples: Data()
+        )
+        try await coordinator.receive(message: .audioFrame(frame))
+        try await coordinator.receive(message: .pttEnd(requestID: 53, sessionKey: 1, lastAudioSequence: 10))
+
+        XCTAssertEqual(audio.beginSequences, [10])
+        XCTAssertEqual(audio.frames, [frame])
+        XCTAssertEqual(audio.endSequences, [10])
+        XCTAssertEqual(try transport.decodedMessages(), [
+            .actionResult(requestID: 50, result: .invalidState, detail: "请先进入会话"),
+            .actionResult(requestID: 51, result: .success, detail: ""),
+            .actionResult(requestID: 52, result: .success, detail: "PTT 已就绪"),
+            .actionResult(requestID: 53, result: .success, detail: "PTT 已结束"),
+        ])
+    }
+
+    func testDisconnectAbortsActivePTT() async throws {
+        let service = SessionClientSpy(sessions: [makeSession(id: "remote-1")])
+        let transport = BluetoothTransportSpy(maximumWriteValueLength: 64)
+        let audio = AudioInputSpy()
+        let coordinator = MacClientCoordinator(
+            sessionClient: service,
+            transport: transport,
+            audioInput: audio
+        )
+        try await coordinator.receive(message: .deviceInfo(deviceInfo()))
+        try await coordinator.receive(message: .selectSession(requestID: 60, sessionKey: 1))
+        try await coordinator.receive(message: .pttBegin(requestID: 61, sessionKey: 1, firstAudioSequence: 1))
+
+        transport.onStateChange?(.disconnected)
+
+        XCTAssertEqual(audio.abortCount, 1)
+    }
+
+    private func makeSession(id: String, state: RemoteSessionState = .idle) -> RemoteSession {
+        RemoteSession(
+            remoteSessionID: id,
+            launcherInstanceID: "launcher-\(id)",
+            providerSessionID: "provider-\(id)",
+            terminalTargetID: "target-\(id)",
+            displayTitle: "Codex \(id)",
+            workingDirectoryLabel: "project",
+            state: state,
+            statusDetail: "",
+            unread: state == .completeUnread,
+            updatedAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+    }
+
+    private func deviceInfo() -> DeviceInformation {
+        DeviceInformation(
+            firmwareVersion: "0.1.0",
+            capabilities: [.display, .microphone, .touch, .userButton],
+            batteryPercent: 80
+        )
+    }
+}
+
+@MainActor
+private final class AudioInputSpy: AudioInputHandling {
+    let dependencyStatus = AudioDependencyStatus.ready
+    private(set) var beginSequences: [UInt32] = []
+    private(set) var frames: [ADPCMFrame] = []
+    private(set) var endSequences: [UInt32] = []
+    private(set) var abortCount = 0
+
+    func begin(firstAudioSequence: UInt32) {
+        beginSequences.append(firstAudioSequence)
+    }
+
+    func receive(_ frame: ADPCMFrame) {
+        frames.append(frame)
+    }
+
+    func end(lastAudioSequence: UInt32) async {
+        endSequences.append(lastAudioSequence)
+    }
+
+    func abort() {
+        abortCount += 1
+    }
+}
+
+private struct SentKey: Equatable, Sendable {
+    let key: TerminalKey
+    let remoteSessionID: String
+}
+
+private struct ScrollAction: Equatable, Sendable {
+    let deltaY: Int
+    let remoteSessionID: String
+}
+
+private actor SessionClientSpy: SessionClient {
+    private var sessions: [RemoteSession]
+    private var selected: [String] = []
+    private var keys: [SentKey] = []
+    private var scrollActions: [ScrollAction] = []
+
+    init(sessions: [RemoteSession]) {
+        self.sessions = sessions
+    }
+
+    func activeSessions(limit: Int) -> [RemoteSession] {
+        Array(sessions.prefix(limit))
+    }
+
+    func selectSession(remoteSessionID: String) -> RemoteSession {
+        selected.append(remoteSessionID)
+        return sessions.first { $0.remoteSessionID == remoteSessionID }!
+    }
+
+    func sendKey(_ key: TerminalKey, remoteSessionID: String) {
+        keys.append(SentKey(key: key, remoteSessionID: remoteSessionID))
+    }
+
+    func scroll(deltaY: Int, remoteSessionID: String) {
+        scrollActions.append(ScrollAction(deltaY: deltaY, remoteSessionID: remoteSessionID))
+    }
+
+    func selectedSessionIDs() -> [String] { selected }
+    func sentKeys() -> [SentKey] { keys }
+    func scrolls() -> [ScrollAction] { scrollActions }
+}
+
+@MainActor
+private final class BluetoothTransportSpy: BluetoothTransport {
+    var state: BluetoothTransportState = .ready(id: "device")
+    let maximumWriteValueLength: Int
+    var onStateChange: ((BluetoothTransportState) -> Void)?
+    var onPacket: ((BLETransportPacket) -> Void)?
+    private var packets: [BLETransportPacket] = []
+
+    init(maximumWriteValueLength: Int) {
+        self.maximumWriteValueLength = maximumWriteValueLength
+    }
+
+    func start() {}
+    func stop() {}
+
+    func send(_ packet: BLETransportPacket, mode: BluetoothWriteMode) {
+        packets.append(packet)
+    }
+
+    func removeAllPackets() {
+        packets.removeAll()
+    }
+
+    func decodedMessages() throws -> [BLEMessage] {
+        var reassemblers: [BLELogicalChannel: BLEFragmentReassembler] = [:]
+        let codec = BLEMessageCodec()
+        return try packets.compactMap { packet in
+            var reassembler = reassemblers[packet.channel, default: BLEFragmentReassembler()]
+            let result = try reassembler.accept(packet.bytes)
+            reassemblers[packet.channel] = reassembler
+            guard case let .complete(data) = result else { return nil }
+            return try codec.decode(data).message
+        }
+    }
+}

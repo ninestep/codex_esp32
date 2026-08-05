@@ -3,7 +3,10 @@ set -u
 
 script_path=${0:A}
 macos_dir=${script_path:h:h}
-helper=${CODEX_REMOTE_HELPER:-"$macos_dir/.build/debug/codex-remote-helper"}
+bundled_helper=${script_path:h:h}/MacOS/codex-remote-helper
+source_helper="$macos_dir/.build/debug/codex-remote-helper"
+default_helper=$([[ -x "$bundled_helper" ]] && print -r -- "$bundled_helper" || print -r -- "$source_helper")
+helper=${CODEX_REMOTE_HELPER:-"$default_helper"}
 tmp_root=${TMPDIR:-/tmp}
 tmp_root=${tmp_root%/}
 socket_path=${CODEX_REMOTE_SOCKET:-"$tmp_root/codex-remote-$UID/events.sock"}

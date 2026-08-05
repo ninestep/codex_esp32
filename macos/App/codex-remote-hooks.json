@@ -1,0 +1,51 @@
+{
+  "description": "将 Codex CLI 会话生命周期同步到 Codex Remote。",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/Applications/Codex Remote.app/Contents/Resources/codex-remote-hook'",
+            "timeout": 5,
+            "statusMessage": "同步 Codex Remote 会话"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/Applications/Codex Remote.app/Contents/Resources/codex-remote-hook'",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/Applications/Codex Remote.app/Contents/Resources/codex-remote-hook'",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/Applications/Codex Remote.app/Contents/Resources/codex-remote-hook'",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

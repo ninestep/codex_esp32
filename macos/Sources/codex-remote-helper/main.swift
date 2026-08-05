@@ -38,7 +38,15 @@ private func runServe(arguments: [String]) async {
     }
 
     let service = SessionService(controller: GhosttyAppleScriptController())
-    let dispatcher = SessionIPCDispatcher(service: service)
+    let hookTrustEvidenceStore = HookTrustEvidenceStore(
+        evidenceURL: HookTrustEvidenceStore.defaultEvidenceURL()
+    )
+    let dispatcher = SessionIPCDispatcher(
+        service: service,
+        onHookAccepted: { eventName in
+            try? hookTrustEvidenceStore.recordAcceptedHook(eventName: eventName)
+        }
+    )
     let startupGate = IPCStartupGate()
     let server = UnixSocketIPCServer(socketURL: socketURL) { request in
         await startupGate.waitUntilReady()
