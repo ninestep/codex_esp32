@@ -1,5 +1,6 @@
 #include "codex_remote/ble_transport.h"
 
+#include "codex_remote/advertising_layout.h"
 #include "codex_remote/codec.h"
 #include "codex_remote/fragment.h"
 #include "codex_remote/message.h"
@@ -255,11 +256,15 @@ static int gap_event(struct ble_gap_event *event, void *arg)
 
 static void advertise(void)
 {
+    const char *device_name = ble_svc_gap_device_name();
+    const cr_ble_advertising_layout_t layout = cr_ble_advertising_layout(strlen(device_name));
+    if (!layout.fits_legacy_limits) {
+        ESP_LOGE(TAG, "advertising name is too long: %u bytes", (unsigned)strlen(device_name));
+        return;
+    }
+
     struct ble_hs_adv_fields fields = {0};
     fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
-    fields.name = (uint8_t *)ble_svc_gap_device_name();
-    fields.name_len = strlen((char *)fields.name);
-    fields.name_is_complete = 1;
     fields.uuids128 = (ble_uuid128_t *)&service_uuid;
     fields.num_uuids128 = 1;
     fields.uuids128_is_complete = 1;
@@ -268,6 +273,17 @@ static void advertise(void)
         ESP_LOGE(TAG, "advertising data failed: %d", rc);
         return;
     }
+
+    struct ble_hs_adv_fields response = {0};
+    response.name = (uint8_t *)device_name;
+    response.name_len = strlen(device_name);
+    response.name_is_complete = 1;
+    rc = ble_gap_adv_rsp_set_fields(&response);
+    if (rc != 0) {
+        ESP_LOGE(TAG, "scan response data failed: %d", rc);
+        return;
+    }
+
     struct ble_gap_adv_params params = {
         .conn_mode = BLE_GAP_CONN_MODE_UND,
         .disc_mode = BLE_GAP_DISC_MODE_GEN,

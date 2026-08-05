@@ -4,6 +4,7 @@
 #include "codex_remote/input_state.h"
 #include "codex_remote/power_state.h"
 #include "codex_remote/ui.h"
+#include "display_runtime.h"
 
 #include "bsp/display.h"
 #include "bsp/esp-bsp.h"
@@ -11,6 +12,7 @@
 #include "esp_check.h"
 #include "esp_err.h"
 #include "esp_log.h"
+#include "esp_lv_adapter.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -84,12 +86,12 @@ static void ble_state_changed(const cr_device_state_t *state, void *context)
             break;
         }
     }
-    if (!bsp_display_lock(200)) {
+    if (esp_lv_adapter_lock(200) != ESP_OK) {
         ESP_LOGW(TAG, "display busy while applying BLE state");
         return;
     }
     cr_ui_update(state);
-    bsp_display_unlock();
+    esp_lv_adapter_unlock();
 }
 
 static void execute_input_action(cr_input_action_t action)
@@ -183,10 +185,10 @@ static void power_task(void *context)
             int brightness = output.mode == CR_POWER_NORMAL ? 100
                 : output.mode == CR_POWER_DIM ? 25
                 : output.mode == CR_POWER_SCREENSAVER ? 40 : 0;
-            if (bsp_display_lock(200)) {
+            if (esp_lv_adapter_lock(200) == ESP_OK) {
                 cr_ui_set_power(output.mode, output.asset_index);
                 (void)bsp_display_brightness_set(brightness);
-                bsp_display_unlock();
+                esp_lv_adapter_unlock();
             }
         }
         vTaskDelay(pdMS_TO_TICKS(250));
@@ -200,12 +202,12 @@ void app_main(void)
     cr_input_state_init(&input_state);
     cr_power_init(&power_state, now_ms());
 
-    if (bsp_display_start() == NULL) {
+    if (cr_display_start() == NULL) {
         ESP_LOGE(TAG, "failed to initialize Waveshare display");
         return;
     }
     ESP_ERROR_CHECK(bsp_display_backlight_on());
-    ESP_ERROR_CHECK(bsp_display_lock(200));
+    ESP_ERROR_CHECK(esp_lv_adapter_lock(200));
     cr_ui_callbacks_t ui_callbacks = {
         .select_session = ui_select,
         .scroll = ui_scroll,
@@ -214,7 +216,7 @@ void app_main(void)
     };
     cr_ui_init(&ui_callbacks);
     cr_ui_update(&device_state);
-    bsp_display_unlock();
+    esp_lv_adapter_unlock();
 
     gpio_config_t button_config = {
         .pin_bit_mask = UINT64_C(1) << USER_BUTTON_GPIO,
