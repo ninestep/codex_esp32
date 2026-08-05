@@ -2,6 +2,7 @@ import CodexRemoteCore
 import CodexRemoteMac
 import Combine
 import ApplicationServices
+import AppKit
 import AVFoundation
 import Darwin
 import Foundation
@@ -119,16 +120,10 @@ final class AppModel: ObservableObject {
         coordinator.onSnapshotChange = { [weak self] snapshot in
             self?.snapshot = snapshot
         }
-        let hookTrustEvidenceStore = HookTrustEvidenceStore(
-            evidenceURL: HookTrustEvidenceStore.defaultEvidenceURL()
-        )
         let dispatcher = SessionIPCDispatcher(
             service: service,
             onSessionsChanged: {
                 try? await coordinator.refreshSessions()
-            },
-            onHookAccepted: { eventName in
-                try? hookTrustEvidenceStore.recordAcceptedHook(eventName: eventName)
             }
         )
         let socketURL = URL(fileURLWithPath: settings.socketPath)
@@ -211,15 +206,17 @@ final class AppModel: ObservableObject {
         switch action {
         case .requestAccessibility:
             requestAccessibilityPermission()
-            appendSetupLog(.info, "已打开辅助功能授权提示，等待用户完成")
-            outcome = await services.coordinator.runAll()
+            openPrivacySettings(anchor: "Privacy_Accessibility")
+            appendSetupLog(.info, "已打开辅助功能设置；完成授权并返回 Codex Remote 后将自动复查")
+            outcome = .completed
         case .requestMicrophone:
             _ = await AVCaptureDevice.requestAccess(for: .audio)
             appendSetupLog(.info, "麦克风权限请求已完成，正在复查")
             outcome = await services.coordinator.runAll()
         case .requestBluetooth:
-            appendSetupLog(.info, "蓝牙权限由系统在连接设备时请求，正在复查")
-            outcome = await services.coordinator.runAll()
+            openPrivacySettings(anchor: "Privacy_Bluetooth")
+            appendSetupLog(.info, "已打开蓝牙权限设置；完成授权并返回 Codex Remote 后将自动复查")
+            outcome = .completed
         case .confirmHooksTrust, .recheck:
             outcome = await services.coordinator.runAll()
         case .testHotkey:
@@ -275,6 +272,13 @@ final class AppModel: ObservableObject {
     func requestAccessibilityPermission() {
         let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
         _ = AXIsProcessTrustedWithOptions(options)
+    }
+
+    private func openPrivacySettings(anchor: String) {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(anchor)") else {
+            return
+        }
+        NSWorkspace.shared.open(url)
     }
 
     func openSetupAssistant() {

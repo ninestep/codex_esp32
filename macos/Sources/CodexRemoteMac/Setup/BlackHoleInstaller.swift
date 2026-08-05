@@ -8,6 +8,23 @@ public enum BlackHoleInstallerError: Error, Equatable, Sendable {
     case commandRunnerFailed(String)
     case deviceMissingAfterInstall
     case busy
+
+    public var userMessage: String {
+        switch self {
+        case .homebrewMissing:
+            "未检测到 Homebrew。请先安装 Homebrew，再执行 brew install --cask blackhole-2ch。"
+        case .invalidHomebrewPath:
+            "Homebrew 可执行文件不在受支持的位置。请确认 brew 位于 /opt/homebrew/bin/brew 或 /usr/local/bin/brew。"
+        case .commandFailed(let exitCode, let stderrSummary):
+            "Homebrew 安装命令失败（退出码 \(exitCode)）：\(stderrSummary)\n修复建议：在终端执行 brew install --cask blackhole-2ch，按提示完成管理员授权；安装后重启 Mac，再回到应用重新检查。"
+        case .commandRunnerFailed(let detail):
+            "无法执行 Homebrew 安装命令：\(detail)\n请在终端执行 brew install --cask blackhole-2ch；安装后重启 Mac，再回到应用重新检查。"
+        case .deviceMissingAfterInstall:
+            "Homebrew 已完成安装，但 CoreAudio 尚未发现 BlackHole 2ch。请重启 Mac 后重新检查。"
+        case .busy:
+            "BlackHole 安装任务正在运行，请等待当前任务结束后重试。"
+        }
+    }
 }
 
 public protocol BlackHoleDeviceCatalog: Sendable {

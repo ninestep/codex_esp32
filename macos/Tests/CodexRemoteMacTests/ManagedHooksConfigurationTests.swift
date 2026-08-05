@@ -257,6 +257,15 @@ final class ManagedHooksConfigurationTests: XCTestCase {
 }
 
 final class HookTrustEvidenceStoreTests: XCTestCase {
+    func testEvidenceURLUsesSocketParentDirectory() {
+        let socketURL = URL(fileURLWithPath: "/private/tmp/codex-remote-501/events.sock")
+
+        XCTAssertEqual(
+            HookTrustEvidenceStore.evidenceURL(forSocketAt: socketURL).path,
+            "/private/tmp/codex-remote-501/codex-remote-hook-trust.json"
+        )
+    }
+
     func testDefaultEvidenceURLUsesCodexDirectoryUnderInjectedHome() throws {
         let home = URL(fileURLWithPath: "/tmp/test-home", isDirectory: true)
 

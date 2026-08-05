@@ -121,11 +121,63 @@ public actor UnixSocketIPCServer {
         var status = stat()
         let result = socketURL.path.withCString { lstat($0, &status) }
         if result == 0 {
-            throw UnixSocketIPCServerError.socketPathAlreadyExists(socketURL.path)
+            guard status.st_mode & S_IFMT == S_IFSOCK,
+                  status.st_uid == geteuid(),
+                  !existingSocketIsReachable(),
+                  removeStaleSocket(expectedDevice: status.st_dev, expectedInode: status.st_ino)
+            else {
+                throw UnixSocketIPCServerError.socketPathAlreadyExists(socketURL.path)
+            }
+            return
         }
         guard errno == ENOENT else {
             throw UnixSocketIPCServerError.socketIdentityUnavailable(errno)
         }
+    }
+
+    private func existingSocketIsReachable() -> Bool {
+        let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard descriptor >= 0 else {
+            return true
+        }
+        defer {
+            close(descriptor)
+        }
+
+        var address = sockaddr_un()
+        address.sun_family = sa_family_t(AF_UNIX)
+        let pathBytes = Array(socketURL.path.utf8CString)
+        let capacity = MemoryLayout.size(ofValue: address.sun_path)
+        guard pathBytes.count <= capacity else {
+            return true
+        }
+        withUnsafeMutablePointer(to: &address.sun_path) { pointer in
+            pointer.withMemoryRebound(to: CChar.self, capacity: capacity) { buffer in
+                for index in pathBytes.indices {
+                    buffer[index] = pathBytes[index]
+                }
+            }
+        }
+
+        let result = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.connect(descriptor, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+            }
+        }
+        return result == 0 || errno != ECONNREFUSED
+    }
+
+    private func removeStaleSocket(expectedDevice: dev_t, expectedInode: ino_t) -> Bool {
+        var current = stat()
+        guard socketURL.path.withCString({ lstat($0, &current) }) == 0,
+              current.st_mode & S_IFMT == S_IFSOCK,
+              current.st_uid == geteuid(),
+              current.st_dev == expectedDevice,
+              current.st_ino == expectedInode
+        else {
+            return false
+        }
+        return unlink(socketURL.path) == 0
     }
 
     private func handleListenerState(_ state: NWListener.State) {

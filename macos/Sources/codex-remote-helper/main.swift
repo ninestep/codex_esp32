@@ -10,7 +10,13 @@ if arguments.first == "serve" {
     let stdin = HelperStdinPolicy.shouldReadStdin(arguments: arguments)
         ? FileHandle.standardInput.readDataToEndOfFile()
         : Data()
-    let result = await HelperCommandRunner().run(
+    let result = await HelperCommandRunner(
+        hookTrustEvidenceRecorderFactory: { socketURL in
+            HookTrustEvidenceStore(
+                evidenceURL: HookTrustEvidenceStore.evidenceURL(forSocketAt: socketURL)
+            )
+        }
+    ).run(
         arguments: arguments,
         stdin: stdin,
         environment: ProcessInfo.processInfo.environment
@@ -38,15 +44,7 @@ private func runServe(arguments: [String]) async {
     }
 
     let service = SessionService(controller: GhosttyAppleScriptController())
-    let hookTrustEvidenceStore = HookTrustEvidenceStore(
-        evidenceURL: HookTrustEvidenceStore.defaultEvidenceURL()
-    )
-    let dispatcher = SessionIPCDispatcher(
-        service: service,
-        onHookAccepted: { eventName in
-            try? hookTrustEvidenceStore.recordAcceptedHook(eventName: eventName)
-        }
-    )
+    let dispatcher = SessionIPCDispatcher(service: service)
     let startupGate = IPCStartupGate()
     let server = UnixSocketIPCServer(socketURL: socketURL) { request in
         await startupGate.waitUntilReady()

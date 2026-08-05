@@ -37,4 +37,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         model.stop()
     }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        Task {
+            await model.refreshSetup()
+        }
+    }
 }

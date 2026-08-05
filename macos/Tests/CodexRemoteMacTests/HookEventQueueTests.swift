@@ -9,8 +9,16 @@ final class HookEventQueueTests: XCTestCase {
         let socketURL = try makeSocketFixture()
         let client = QueueTestIPCClient(error: LocalIPCClientError.connectFailed(ECONNREFUSED))
         let queue = RecordingPendingEventQueue()
+        let recorder = QueueHookTrustEvidenceRecorder()
 
-        let result = await HelperCommandRunner(socketClient: client, hookQueue: queue).run(
+        let result = await HelperCommandRunner(
+            socketClient: client,
+            hookQueue: queue,
+            hookTrustEvidenceRecorderFactory: { receivedSocketURL in
+                XCTAssertEqual(receivedSocketURL, socketURL)
+                return recorder
+            }
+        ).run(
             arguments: ["hook", "--socket", socketURL.path],
             stdin: hookJSON(sessionID: "codex-1"),
             environment: [:]
@@ -22,6 +30,7 @@ final class HookEventQueueTests: XCTestCase {
         let enqueues = await queue.recordedEnqueues()
         XCTAssertEqual(callCount, 1)
         XCTAssertEqual(enqueues, [QueuedPendingEvent(socketPath: socketURL.path, event: .hook(minimalHookPayload(sessionID: "codex-1")))])
+        XCTAssertEqual(recorder.recordedEventNames(), ["Stop"])
     }
 
     func testHookConnectTimeoutQueuesButPostSendFailuresDoNotQueue() async throws {
@@ -407,6 +416,21 @@ private actor RecordingPendingEventQueue: HookEventQueueing {
 
     func recordedEnqueues() -> [QueuedPendingEvent] {
         enqueues
+    }
+}
+
+private final class QueueHookTrustEvidenceRecorder: HookTrustEvidenceRecording, @unchecked Sendable {
+    private let lock = NSLock()
+    private var eventNames: [String] = []
+
+    func recordAcceptedHook(eventName: String) throws {
+        lock.withLock {
+            eventNames.append(eventName)
+        }
+    }
+
+    func recordedEventNames() -> [String] {
+        lock.withLock { eventNames }
     }
 }
 

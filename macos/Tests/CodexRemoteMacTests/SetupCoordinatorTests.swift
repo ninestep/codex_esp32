@@ -188,6 +188,31 @@ final class SetupCoordinatorTests: XCTestCase {
         XCTAssertFalse(detail?.contains("token") ?? true)
     }
 
+    func testBlackHoleCommandFailureShowsRedactedReasonAndRecoveryGuidance() async {
+        let inspector = SetupInspectorSpy(snapshots: [
+            makeSnapshot(overrides: [.blackHole: .needsConfiguration]),
+        ])
+        let executor = SetupExecutorSpy(failingActions: [
+            .installBlackHole: BlackHoleInstallerError.commandFailed(
+                exitCode: 1,
+                stderrSummary: "sudo: a terminal is required"
+            ),
+        ])
+        let coordinator = SetupCoordinator(
+            inspector: inspector,
+            executor: executor,
+            initialSnapshot: SetupSnapshot(results: makeSnapshot(overrides: [.blackHole: .needsConfiguration]))
+        )
+
+        _ = await coordinator.perform(.installBlackHole, for: .blackHole)
+
+        let detail = await coordinator.snapshot.result(for: .blackHole)?.detail
+        XCTAssertTrue(detail?.contains("退出码 1") == true)
+        XCTAssertTrue(detail?.contains("sudo: a terminal is required") == true)
+        XCTAssertTrue(detail?.contains("brew install --cask blackhole-2ch") == true)
+        XCTAssertTrue(detail?.contains("重启 Mac") == true)
+    }
+
     func testGhosttyAndCodexCLINeedsConfigurationWithoutAvailableActionsDoNotUseDefaultInstallAction() async {
         for item in [SetupItem.ghostty, .codexCLI] {
             let inspector = SetupInspectorSpy(snapshots: [

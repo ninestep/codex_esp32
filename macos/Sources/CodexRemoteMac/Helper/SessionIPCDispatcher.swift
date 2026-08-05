@@ -4,16 +4,13 @@ import Foundation
 public struct SessionIPCDispatcher: Sendable {
     private let service: SessionService
     private let onSessionsChanged: @Sendable () async -> Void
-    private let onHookAccepted: @Sendable (String) -> Void
 
     public init(
         service: SessionService,
-        onSessionsChanged: @escaping @Sendable () async -> Void = {},
-        onHookAccepted: @escaping @Sendable (String) -> Void = { _ in }
+        onSessionsChanged: @escaping @Sendable () async -> Void = {}
     ) {
         self.service = service
         self.onSessionsChanged = onSessionsChanged
-        self.onHookAccepted = onHookAccepted
     }
 
     public func handle(_ request: LocalIPCRequest) async -> LocalIPCResponse {
@@ -26,9 +23,6 @@ public struct SessionIPCDispatcher: Sendable {
             case .hook(let payload):
                 _ = try await service.receiveHook(payload)
                 await onSessionsChanged()
-                if ManagedHookEvent(rawValue: payload.hookEventName) != nil {
-                    onHookAccepted(payload.hookEventName)
-                }
                 return .ok
             case .list:
                 return .sessions(await service.activeSessions(limit: 8))
@@ -58,13 +52,11 @@ public struct SessionIPCDispatcher: Sendable {
             case .hook(let payload):
                 _ = try await service.receiveHook(payload)
                 await onSessionsChanged()
-                if ManagedHookEvent(rawValue: payload.hookEventName) != nil {
-                    onHookAccepted(payload.hookEventName)
-                }
                 return .ok
             }
         } catch {
             return .error(code: .handlerFailed)
         }
     }
+
 }

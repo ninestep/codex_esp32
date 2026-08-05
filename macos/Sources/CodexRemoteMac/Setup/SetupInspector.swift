@@ -95,7 +95,9 @@ public struct SetupInspector: SetupInspecting {
         self.context = context
         self.hotkeyParser = hotkeyParser
         self.hookTrustEvidenceStore = hookTrustEvidenceStore ?? HookTrustEvidenceStore(
-            evidenceURL: HookTrustEvidenceStore.evidenceURL(fromTrustTarget: context.managedHooksTrustTargetURL)
+            evidenceURL: HookTrustEvidenceStore.evidenceURL(
+                forSocketAt: URL(fileURLWithPath: context.socketPath)
+            )
         )
     }
 
@@ -258,7 +260,8 @@ public struct SetupInspector: SetupInspecting {
             return SetupCheckResult(
                 item: .hooksTrust,
                 state: .waitingForUser,
-                summary: "Hooks 信任需要确认，请在 Codex 中运行 /hooks 并启动一次测试会话",
+                summary: "等待真实 Hook 回调验证；请确认 /hooks 信任后，通过 Codex Remote shim 新建一次 Codex 会话",
+                detail: "仅完成 /hooks 授权无法由外部程序直接读取；收到配置时间之后的真实 Hook 事件才会标记为已确认。",
                 availableActions: [.confirmHooksTrust]
             )
         }

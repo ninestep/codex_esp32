@@ -232,6 +232,82 @@ final class HelperCommandTests: XCTestCase {
         XCTAssertEqual(calls, [])
     }
 
+    func testHookCommandRecordsAllSupportedEventsEvenWhenDaemonRejectsBusinessHandling() async {
+        let recorder = RecordingHookTrustEvidenceRecorder()
+        let client = RecordingIPCClient(response: .error(code: .handlerFailed))
+        let runner = HelperCommandRunner(
+            socketClient: client,
+            hookTrustEvidenceRecorderFactory: { socketURL in
+                XCTAssertEqual(socketURL.path, "/tmp/codex.sock")
+                return recorder
+            }
+        )
+
+        for eventName in ["SessionStart", "UserPromptSubmit", "PermissionRequest", "Stop"] {
+            let result = await runner.run(
+                arguments: ["hook", "--socket", "/tmp/codex.sock"],
+                stdin: Data(#"{"hook_event_name":"\#(eventName)","session_id":"codex-1"}"#.utf8),
+                environment: [:]
+            )
+
+            XCTAssertEqual(result.exitCode, 69)
+        }
+        XCTAssertEqual(
+            recorder.recordedEventNames(),
+            ["SessionStart", "UserPromptSubmit", "PermissionRequest", "Stop"]
+        )
+    }
+
+    func testHookCommandDoesNotRecordMalformedOrUnknownEvents() async {
+        let recorder = RecordingHookTrustEvidenceRecorder()
+        let client = RecordingIPCClient(response: .ok)
+        let runner = HelperCommandRunner(
+            socketClient: client,
+            hookTrustEvidenceRecorderFactory: { socketURL in
+                XCTAssertEqual(socketURL.path, "/tmp/codex.sock")
+                return recorder
+            }
+        )
+
+        let malformed = await runner.run(
+            arguments: ["hook", "--socket", "/tmp/codex.sock"],
+            stdin: Data(#"{"hook_event_name":"Stop"}"#.utf8),
+            environment: [:]
+        )
+        let unknown = await runner.run(
+            arguments: ["hook", "--socket", "/tmp/codex.sock"],
+            stdin: Data(#"{"hook_event_name":"UnknownEvent","session_id":"codex-2"}"#.utf8),
+            environment: [:]
+        )
+
+        XCTAssertEqual(malformed.exitCode, 65)
+        XCTAssertEqual(unknown.exitCode, 0)
+        XCTAssertEqual(recorder.recordedEventNames(), [])
+    }
+
+    func testHookCommandStopsBeforeIPCWhenEvidenceWriteFails() async {
+        let recorder = RecordingHookTrustEvidenceRecorder(error: StubHookTrustEvidenceError.writeFailed)
+        let client = RecordingIPCClient(response: .ok)
+        let runner = HelperCommandRunner(
+            socketClient: client,
+            hookTrustEvidenceRecorderFactory: { socketURL in
+                XCTAssertEqual(socketURL.path, "/tmp/codex.sock")
+                return recorder
+            }
+        )
+
+        let result = await runner.run(
+            arguments: ["hook", "--socket", "/tmp/codex.sock"],
+            stdin: Data(#"{"hook_event_name":"SessionStart","session_id":"codex-1"}"#.utf8),
+            environment: [:]
+        )
+
+        XCTAssertEqual(result.exitCode, 74)
+        XCTAssertEqual(result.stderr, "codex-remote-helper: hook trust evidence write failed\n")
+        let calls = await client.recordedCalls()
+        XCTAssertEqual(calls, [])
+    }
+
     func testFocusScrollAndKeyCommandsRequirePositiveDaemonResponse() async {
         let client = RecordingIPCClient(response: .error(code: .handlerFailed))
         let runner = HelperCommandRunner(socketClient: client)
@@ -378,123 +454,6 @@ final class HelperCommandTests: XCTestCase {
         )
     }
 
-    func testSessionIPCDispatcherRecordsAcceptedDirectHookOnlyAfterSuccess() async throws {
-        let accepted = AcceptedHookRecorder()
-        let service = SessionService(controller: HelperRecordingTerminalController(), idGenerator: { "remote-1" })
-        let dispatcher = SessionIPCDispatcher(service: service, onHookAccepted: { eventName in
-            Task {
-                await accepted.record(eventName)
-            }
-        })
-
-        let failed = await dispatcher.handle(.hook(HookPayload(
-            hookEventName: "Stop",
-            sessionID: "missing-session",
-            launcherInstanceID: nil,
-            message: nil,
-            lastAssistantMessage: nil
-        )))
-        let register = await dispatcher.handle(.registerLaunch(launcherID: "launcher-1"))
-        let succeeded = await dispatcher.handle(.hook(HookPayload(
-            hookEventName: "SessionStart",
-            sessionID: "codex-1",
-            launcherInstanceID: "launcher-1",
-            message: nil,
-            lastAssistantMessage: nil
-        )))
-        try await Task.sleep(for: .milliseconds(20))
-
-        XCTAssertEqual(failed, .error(code: .handlerFailed))
-        XCTAssertEqual(register, .ok)
-        XCTAssertEqual(succeeded, .ok)
-        let acceptedEvents = await accepted.events()
-        XCTAssertEqual(acceptedEvents, ["SessionStart"])
-    }
-
-    func testSessionIPCDispatcherDoesNotRecordUnknownDirectHookEvent() async throws {
-        let accepted = AcceptedHookRecorder()
-        let service = SessionService(controller: HelperRecordingTerminalController(), idGenerator: { "remote-1" })
-        let dispatcher = SessionIPCDispatcher(service: service, onHookAccepted: { eventName in
-            Task {
-                await accepted.record(eventName)
-            }
-        })
-
-        let response = await dispatcher.handle(.hook(HookPayload(
-            hookEventName: "UnknownEvent",
-            sessionID: "codex-unknown",
-            launcherInstanceID: nil,
-            message: nil,
-            lastAssistantMessage: nil
-        )))
-        try await Task.sleep(for: .milliseconds(20))
-
-        XCTAssertEqual(response, .ok)
-        let acceptedEvents = await accepted.events()
-        XCTAssertEqual(acceptedEvents, [])
-    }
-
-    func testSessionIPCDispatcherRecordsAcceptedPendingHookOnlyAfterSuccess() async throws {
-        let accepted = AcceptedHookRecorder()
-        let service = SessionService(controller: HelperRecordingTerminalController(), idGenerator: { "remote-1" })
-        let dispatcher = SessionIPCDispatcher(service: service, onHookAccepted: { eventName in
-            Task {
-                await accepted.record(eventName)
-            }
-        })
-
-        let failed = await dispatcher.handlePending(.hook(HookPayload(
-            hookEventName: "Stop",
-            sessionID: "missing-session",
-            launcherInstanceID: nil,
-            message: nil,
-            lastAssistantMessage: nil
-        )))
-        let launch = await dispatcher.handlePending(.launchSnapshot(LaunchRegistration(
-            launcherInstanceID: "launcher-1",
-            terminalTargetID: "term-7",
-            displayTitle: "ESP32",
-            workingDirectoryLabel: "esp32"
-        )))
-        let succeeded = await dispatcher.handlePending(.hook(HookPayload(
-            hookEventName: "SessionStart",
-            sessionID: "codex-1",
-            launcherInstanceID: "launcher-1",
-            message: nil,
-            lastAssistantMessage: nil
-        )))
-        try await Task.sleep(for: .milliseconds(20))
-
-        XCTAssertEqual(failed, .error(code: .handlerFailed))
-        XCTAssertEqual(launch, .ok)
-        XCTAssertEqual(succeeded, .ok)
-        let acceptedEvents = await accepted.events()
-        XCTAssertEqual(acceptedEvents, ["SessionStart"])
-    }
-
-    func testSessionIPCDispatcherDoesNotRecordUnknownPendingHookEvent() async throws {
-        let accepted = AcceptedHookRecorder()
-        let service = SessionService(controller: HelperRecordingTerminalController(), idGenerator: { "remote-1" })
-        let dispatcher = SessionIPCDispatcher(service: service, onHookAccepted: { eventName in
-            Task {
-                await accepted.record(eventName)
-            }
-        })
-
-        let response = await dispatcher.handlePending(.hook(HookPayload(
-            hookEventName: "UnknownEvent",
-            sessionID: "codex-unknown",
-            launcherInstanceID: nil,
-            message: nil,
-            lastAssistantMessage: nil
-        )))
-        try await Task.sleep(for: .milliseconds(20))
-
-        XCTAssertEqual(response, .ok)
-        let acceptedEvents = await accepted.events()
-        XCTAssertEqual(acceptedEvents, [])
-    }
-
     func testSessionIPCDispatcherReturnsFixedErrorCodeWithoutLeakingServiceError() async {
         let dispatcher = SessionIPCDispatcher(
             service: SessionService(controller: HelperRecordingTerminalController(), idGenerator: { "remote-1" })
@@ -521,6 +480,33 @@ final class HelperCommandTests: XCTestCase {
 
         await server.stop()
         XCTAssertFalse(FileManager.default.fileExists(atPath: socketURL.path))
+    }
+
+    func testUnixSocketIPCServerRemovesStaleSocketBeforeStarting() async throws {
+        let socketURL = try makeSocketFixture().socketURL
+        try createStaleUnixSocket(at: socketURL)
+        let server = UnixSocketIPCServer(socketURL: socketURL) { _ in .ok }
+
+        try await server.start()
+
+        XCTAssertEqual(try socketMode(at: socketURL), 0o600)
+        await server.stop()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: socketURL.path))
+    }
+
+    func testUnixSocketIPCServerDoesNotRemoveExistingRegularFile() async throws {
+        let socketURL = try makeSocketFixture().socketURL
+        FileManager.default.createFile(atPath: socketURL.path, contents: Data("keep".utf8))
+        let server = UnixSocketIPCServer(socketURL: socketURL) { _ in .ok }
+
+        do {
+            try await server.start()
+            XCTFail("Expected existing path rejection")
+        } catch {
+            XCTAssertEqual(error as? UnixSocketIPCServerError, .socketPathAlreadyExists(socketURL.path))
+        }
+
+        XCTAssertEqual(try Data(contentsOf: socketURL), Data("keep".utf8))
     }
 
     func testUnixSocketIPCServerStopDoesNotRemoveReplacementFile() async throws {
@@ -659,15 +645,30 @@ private actor IPCRequestRecorder {
     }
 }
 
-private actor AcceptedHookRecorder {
-    private var acceptedEvents: [String] = []
+private enum StubHookTrustEvidenceError: Error {
+    case writeFailed
+}
 
-    func record(_ eventName: String) {
-        acceptedEvents.append(eventName)
+private final class RecordingHookTrustEvidenceRecorder: HookTrustEvidenceRecording, @unchecked Sendable {
+    private let lock = NSLock()
+    private var eventNames: [String] = []
+    private let error: Error?
+
+    init(error: Error? = nil) {
+        self.error = error
     }
 
-    func events() -> [String] {
-        acceptedEvents
+    func recordAcceptedHook(eventName: String) throws {
+        if let error {
+            throw error
+        }
+        lock.withLock {
+            eventNames.append(eventName)
+        }
+    }
+
+    func recordedEventNames() -> [String] {
+        lock.withLock { eventNames }
     }
 }
 
@@ -883,4 +884,38 @@ private func sendRawIPCFrame(_ frame: Data, to socketURL: URL) async throws -> D
         }
         return response
     }.value
+}
+
+private func createStaleUnixSocket(at socketURL: URL) throws {
+    let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
+    guard descriptor >= 0 else {
+        throw POSIXError(.init(rawValue: errno) ?? .EIO)
+    }
+    defer {
+        close(descriptor)
+    }
+
+    var address = sockaddr_un()
+    address.sun_family = sa_family_t(AF_UNIX)
+    let pathBytes = Array(socketURL.path.utf8CString)
+    let capacity = MemoryLayout.size(ofValue: address.sun_path)
+    guard pathBytes.count <= capacity else {
+        throw POSIXError(.ENAMETOOLONG)
+    }
+    withUnsafeMutablePointer(to: &address.sun_path) { pointer in
+        pointer.withMemoryRebound(to: CChar.self, capacity: capacity) { buffer in
+            for index in pathBytes.indices {
+                buffer[index] = pathBytes[index]
+            }
+        }
+    }
+
+    let bound = withUnsafePointer(to: &address) { pointer in
+        pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+            Darwin.bind(descriptor, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+        }
+    }
+    guard bound == 0 else {
+        throw POSIXError(.init(rawValue: errno) ?? .EIO)
+    }
 }

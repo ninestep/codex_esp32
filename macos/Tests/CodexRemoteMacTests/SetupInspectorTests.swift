@@ -237,9 +237,37 @@ final class SetupInspectorTests: XCTestCase {
         let current = SetupSnapshot(results: await currentInspector.inspect())
         let unknown = SetupSnapshot(results: await unknownInspector.inspect())
 
-        assertResult(stale, .hooksTrust, .waitingForUser, [.confirmHooksTrust], summaryContains: "/hooks")
+        assertResult(stale, .hooksTrust, .waitingForUser, [.confirmHooksTrust], summaryContains: "真实 Hook 回调")
         assertResult(current, .hooksTrust, .ready, [], summaryContains: "Hooks 信任已确认")
-        assertResult(unknown, .hooksTrust, .waitingForUser, [.confirmHooksTrust], summaryContains: "/hooks")
+        assertResult(unknown, .hooksTrust, .waitingForUser, [.confirmHooksTrust], summaryContains: "真实 Hook 回调")
+    }
+
+    func testHooksTrustReadsDefaultEvidenceFromSocketParentDirectory() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let runtimeDirectory = root.appendingPathComponent("codex-remote-501", isDirectory: true)
+        try FileManager.default.createDirectory(at: runtimeDirectory, withIntermediateDirectories: false)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: runtimeDirectory.path)
+        let socketURL = runtimeDirectory.appendingPathComponent("events.sock")
+        let hooksURL = root.appendingPathComponent("hooks.json")
+        try write(#"{"hooks":{}}"#, to: hooksURL)
+        let hooksWrittenAt = Date(timeIntervalSince1970: 200)
+        try FileManager.default.setAttributes([.modificationDate: hooksWrittenAt], ofItemAtPath: hooksURL.path)
+        let store = HookTrustEvidenceStore(
+            evidenceURL: HookTrustEvidenceStore.evidenceURL(forSocketAt: socketURL),
+            clock: { Date(timeIntervalSince1970: 201) }
+        )
+        try store.recordAcceptedHook(eventName: "SessionStart")
+        let context = SetupInspectionContext.testReady
+            .withSocketPath(socketURL.path)
+            .withHooksConfigurationURL(hooksURL)
+
+        let snapshot = SetupSnapshot(results: await SetupInspector(
+            environment: FakeSetupEnvironment(hooksConfiguration: .valid),
+            context: context
+        ).inspect())
+
+        assertResult(snapshot, .hooksTrust, .ready, [], summaryContains: "Hooks 信任已确认")
     }
 
     func testCommandRequestRejectsRelativeExecutablePath() {
@@ -838,6 +866,21 @@ private extension SetupInspectionContext {
         SetupInspectionContext(
             socketPath: socketPath,
             doubaoHotkey: hotkey,
+            applicationURL: applicationURL,
+            stableApplicationURL: stableApplicationURL,
+            managedShimURL: managedShimURL,
+            managedShimTargetURL: managedShimTargetURL,
+            shellProfileURL: shellProfileURL,
+            managedHooksConfigurationURL: managedHooksConfigurationURL,
+            managedHookExecutableURL: managedHookExecutableURL,
+            managedHooksTrustTargetURL: managedHooksTrustTargetURL
+        )
+    }
+
+    func withSocketPath(_ socketPath: String) -> SetupInspectionContext {
+        SetupInspectionContext(
+            socketPath: socketPath,
+            doubaoHotkey: doubaoHotkey,
             applicationURL: applicationURL,
             stableApplicationURL: stableApplicationURL,
             managedShimURL: managedShimURL,

@@ -17,6 +17,9 @@ public protocol LaunchSnapshotCapturing: Sendable {
     func captureLaunchSnapshot(launcherID: String) async throws -> LaunchRegistration
 }
 
+public typealias HookTrustEvidenceRecorderFactory =
+    @Sendable (URL) -> (any HookTrustEvidenceRecording)?
+
 public struct GhosttyLaunchSnapshotCapturer: LaunchSnapshotCapturing {
     private let controller: any TerminalController
 
@@ -39,15 +42,18 @@ public struct HelperCommandRunner: Sendable {
     private let socketClient: any LocalIPCClienting
     private let hookQueue: any HookEventQueueing
     private let launchSnapshotCapturer: any LaunchSnapshotCapturing
+    private let hookTrustEvidenceRecorderFactory: HookTrustEvidenceRecorderFactory
 
     public init(
         socketClient: any LocalIPCClienting = LocalIPCClient(),
         hookQueue: any HookEventQueueing = HookEventQueue(),
-        launchSnapshotCapturer: any LaunchSnapshotCapturing = GhosttyLaunchSnapshotCapturer()
+        launchSnapshotCapturer: any LaunchSnapshotCapturing = GhosttyLaunchSnapshotCapturer(),
+        hookTrustEvidenceRecorderFactory: @escaping HookTrustEvidenceRecorderFactory = { _ in nil }
     ) {
         self.socketClient = socketClient
         self.hookQueue = hookQueue
         self.launchSnapshotCapturer = launchSnapshotCapturer
+        self.hookTrustEvidenceRecorderFactory = hookTrustEvidenceRecorderFactory
     }
 
     public func run(arguments: [String], stdin: Data, environment: [String: String]) async -> HelperCommandResult {
@@ -120,6 +126,17 @@ public struct HelperCommandRunner: Sendable {
             payload = try RawHookPayloadMapper(processEnvironment: environment).map(stdin)
         } catch {
             return HelperCommandResult(exitCode: 65, stderr: "codex-remote-helper: malformed hook: \(hookMappingDiagnostic(error))\n")
+        }
+        if ManagedHookEvent(rawValue: payload.hookEventName) != nil,
+           let hookTrustEvidenceRecorder = hookTrustEvidenceRecorderFactory(socketURL) {
+            do {
+                try hookTrustEvidenceRecorder.recordAcceptedHook(eventName: payload.hookEventName)
+            } catch {
+                return HelperCommandResult(
+                    exitCode: 74,
+                    stderr: "codex-remote-helper: hook trust evidence write failed\n"
+                )
+            }
         }
         do {
             let response = try await socketClient.send(.hook(payload), to: socketURL)

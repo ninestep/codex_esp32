@@ -15,12 +15,16 @@ public protocol HookTrustEvidenceReading: Sendable {
     func latestEvidence() -> HookTrustEvidence?
 }
 
+public protocol HookTrustEvidenceRecording: Sendable {
+    func recordAcceptedHook(eventName: String) throws
+}
+
 public enum HookTrustEvidenceStoreError: Error, Equatable, Sendable {
     case invalidTarget
     case writeFailed
 }
 
-public struct HookTrustEvidenceStore: HookTrustEvidenceReading, Sendable {
+public struct HookTrustEvidenceStore: HookTrustEvidenceReading, HookTrustEvidenceRecording, Sendable {
     public static let fileName = "codex-remote-hook-trust.json"
 
     private let evidenceURL: URL
@@ -55,6 +59,13 @@ public struct HookTrustEvidenceStore: HookTrustEvidenceReading, Sendable {
             return standardized
         }
         return standardized.appendingPathComponent(fileName)
+    }
+
+    public static func evidenceURL(forSocketAt socketURL: URL) -> URL {
+        socketURL
+            .standardizedFileURL
+            .deletingLastPathComponent()
+            .appendingPathComponent(fileName)
     }
 
     public func latestEvidence() -> HookTrustEvidence? {

@@ -191,6 +191,8 @@ public actor SetupCoordinator {
         let message: String
         if let setupError = error as? SetupExecutionError {
             message = setupError.userMessage
+        } else if let blackHoleError = error as? BlackHoleInstallerError {
+            message = blackHoleError.userMessage
         } else {
             message = "未能完成配置，请重试"
         }
