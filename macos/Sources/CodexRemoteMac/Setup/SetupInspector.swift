@@ -443,9 +443,15 @@ public struct MacSetupEnvironment: SetupEnvironmentReading {
     }
 
     public func codexExecutable() async -> URL? {
-        await firstExecutable(named: "codex", extraCandidates: [
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        return await firstExecutable(named: "codex", extraCandidates: [
             URL(fileURLWithPath: "/opt/homebrew/bin/codex"),
             URL(fileURLWithPath: "/usr/local/bin/codex"),
+            home.appendingPathComponent(".local/bin/codex"),
+            home.appendingPathComponent(".npm-global/bin/codex"),
+            home.appendingPathComponent(".bun/bin/codex"),
+            home.appendingPathComponent(".volta/bin/codex"),
+            home.appendingPathComponent(".asdf/shims/codex"),
         ])
     }
 

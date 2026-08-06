@@ -60,10 +60,14 @@ jobs:
           RELEASE_VERSION: ${{ github.ref_name }}
         run: |
           app_dir="$RUNNER_TEMP/codex-remote-build/Codex Remote.app"
+          staging_dir="$RUNNER_TEMP/codex-remote-dmg-staging"
           dmg_path="$RUNNER_TEMP/CodexRemote-${RELEASE_VERSION}-macOS.dmg"
+          mkdir -p "$staging_dir"
+          cp -R "$app_dir" "$staging_dir/Codex Remote.app"
+          ln -s /Applications "$staging_dir/Applications"
           hdiutil create \
             -volname "Codex Remote ${RELEASE_VERSION}" \
-            -srcfolder "$app_dir" \
+            -srcfolder "$staging_dir" \
             -ov \
             -format UDZO \
             "$dmg_path"
