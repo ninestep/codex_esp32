@@ -34,7 +34,8 @@ final class AppSourceWiringTests: XCTestCase {
             encoding: .utf8
         )
 
-        XCTAssertEqual(info["CFBundleIconFile"] as? String, "CodexRemote")
+        XCTAssertEqual(info["CFBundleIconFile"] as? String, "CodexRemote.icns")
+        XCTAssertNil(info["LSUIElement"])
         XCTAssertTrue(packageScript.contains("App/CodexRemote.icns"))
         XCTAssertTrue(packageScript.contains("Contents/Resources/CodexRemote.icns"))
         XCTAssertTrue(
