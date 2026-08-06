@@ -19,10 +19,9 @@ public final class BlackHoleAudioInputBridge: AudioInputHandling {
     private let originalInputDeviceIDProvider: () -> AudioDeviceID?
     private let setDefaultInputDeviceIDOperation: ((AudioDeviceID) throws -> Void)?
     private let configureEngineOperation: ((AudioDeviceID) throws -> Void)?
-    private let playbackCompletionOperation: (() async -> Void)?
     private let codec = IMAADPCMCodec()
-    private lazy var engine = AVAudioEngine()
-    private lazy var player = AVAudioPlayerNode()
+    private var engine: AVAudioEngine?
+    private var player: AVAudioPlayerNode?
     private var originalInputDeviceID: AudioDeviceID?
     private var expectedSequence: UInt32?
     private var activeHotkey: ParsedHotkey?
@@ -41,7 +40,6 @@ public final class BlackHoleAudioInputBridge: AudioInputHandling {
         self.originalInputDeviceIDProvider = { catalog.defaultInputDeviceID() }
         self.setDefaultInputDeviceIDOperation = nil
         self.configureEngineOperation = nil
-        self.playbackCompletionOperation = nil
     }
 
     init(
@@ -51,8 +49,7 @@ public final class BlackHoleAudioInputBridge: AudioInputHandling {
         originalInputDeviceID: AudioDeviceID?,
         emitter: any HotkeyEmitting,
         setDefaultInputDeviceIDOperation: @escaping (AudioDeviceID) throws -> Void = { _ in },
-        configureEngineOperation: @escaping (AudioDeviceID) throws -> Void = { _ in },
-        playbackCompletionOperation: @escaping () async -> Void = {}
+        configureEngineOperation: @escaping (AudioDeviceID) throws -> Void = { _ in }
     ) {
         self.catalog = CoreAudioDeviceCatalog()
         self.emitter = emitter
@@ -62,7 +59,6 @@ public final class BlackHoleAudioInputBridge: AudioInputHandling {
         self.originalInputDeviceIDProvider = { originalInputDeviceID }
         self.setDefaultInputDeviceIDOperation = setDefaultInputDeviceIDOperation
         self.configureEngineOperation = configureEngineOperation
-        self.playbackCompletionOperation = playbackCompletionOperation
     }
 
     public func begin(firstAudioSequence: UInt32) throws {
@@ -98,6 +94,7 @@ public final class BlackHoleAudioInputBridge: AudioInputHandling {
     public func receive(_ frame: ADPCMFrame) throws {
         guard let expectedSequence else { throw AudioInputBridgeError.notActive }
         guard frame.sequence >= expectedSequence else { return }
+        try restartEngineIfNeeded()
         if frame.sequence > expectedSequence {
             for _ in expectedSequence..<frame.sequence {
                 try schedule(samples: Array(repeating: 0, count: IMAADPCMCodec.samplesPerFrame))
@@ -107,16 +104,25 @@ public final class BlackHoleAudioInputBridge: AudioInputHandling {
         self.expectedSequence = frame.sequence &+ 1
     }
 
+    private func restartEngineIfNeeded() throws {
+        guard let engine, let player else { throw AudioInputBridgeError.audioSystemFailure }
+        guard !engine.isRunning else { return }
+        do {
+            try engine.start()
+            player.play()
+            Self.logger.info("BlackHole audio engine restarted after a configuration change")
+        } catch {
+            Self.logger.error(
+                "Restarting BlackHole audio engine failed: \(error.localizedDescription, privacy: .public)"
+            )
+            throw AudioInputBridgeError.audioSystemFailure
+        }
+    }
+
     public func end(lastAudioSequence: UInt32) async throws {
         guard expectedSequence != nil else { throw AudioInputBridgeError.notActive }
         do {
-            // 先释放快捷键，确保豆包在播放队列等待时也能立即结束识别。
             if let hotkey = activeHotkey { try triggerEnd(hotkey) }
-            if let playbackCompletionOperation {
-                await playbackCompletionOperation()
-            } else {
-                await playbackCompletion()
-            }
             restoreSystemState()
             _ = lastAudioSequence
         } catch {
@@ -133,6 +139,8 @@ public final class BlackHoleAudioInputBridge: AudioInputHandling {
     }
 
     private func configureEngine(outputDeviceID: AudioDeviceID) throws {
+        let engine = AVAudioEngine()
+        let player = AVAudioPlayerNode()
         engine.attach(player)
         let outputNode = engine.outputNode
         guard let audioUnit = outputNode.audioUnit else {
@@ -173,9 +181,12 @@ public final class BlackHoleAudioInputBridge: AudioInputHandling {
             throw AudioInputBridgeError.audioSystemFailure
         }
         player.play()
+        self.engine = engine
+        self.player = player
     }
 
     private func schedule(samples: [Int16]) throws {
+        guard let player else { throw AudioInputBridgeError.audioSystemFailure }
         guard let format = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
             sampleRate: 16_000,
@@ -192,23 +203,6 @@ public final class BlackHoleAudioInputBridge: AudioInputHandling {
             target[index] = Float(sample) / Float(Int16.max)
         }
         player.scheduleBuffer(buffer)
-    }
-
-    private func playbackCompletion() async {
-        guard let format = AVAudioFormat(
-            commonFormat: .pcmFormatFloat32,
-            sampleRate: 16_000,
-            channels: 1,
-            interleaved: false
-        ), let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 1) else {
-            return
-        }
-        buffer.frameLength = 1
-        await withCheckedContinuation { continuation in
-            player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { _ in
-                continuation.resume()
-            }
-        }
     }
 
     private func triggerBegin(_ hotkey: ParsedHotkey) throws {
@@ -242,9 +236,11 @@ public final class BlackHoleAudioInputBridge: AudioInputHandling {
 
     private func restoreSystemState() {
         if configureEngineOperation == nil {
-            player.stop()
-            engine.stop()
-            engine.detach(player)
+            player?.stop()
+            engine?.stop()
+            if let player { engine?.detach(player) }
+            player = nil
+            engine = nil
         }
         if let originalInputDeviceID {
             if let setDefaultInputDeviceIDOperation {

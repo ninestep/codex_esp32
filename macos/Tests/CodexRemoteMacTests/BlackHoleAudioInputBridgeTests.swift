@@ -58,6 +58,38 @@ final class BlackHoleAudioInputBridgeTests: XCTestCase {
         XCTAssertLessThan(nativeFormat.lowerBound, connectOutput.lowerBound)
     }
 
+    func testDefaultInputSwitchWaitsForCoreAudioToSettleBeforeEngineStarts() throws {
+        let macosRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let sourceURL = macosRoot.appendingPathComponent(
+            "Sources/CodexRemoteMac/Audio/CoreAudioDeviceCatalog.swift"
+        )
+        let source = try String(contentsOf: sourceURL, encoding: .utf8)
+
+        let confirmation = try XCTUnwrap(source.range(of: "defaultInputDeviceID() == id"))
+        let settlingDelay = try XCTUnwrap(source.range(of: "Thread.sleep(forTimeInterval:"))
+        XCTAssertLessThan(confirmation.lowerBound, settlingDelay.lowerBound)
+    }
+
+    func testReceiveRestartsEngineStoppedByCoreAudioBeforeSchedulingAudio() throws {
+        let macosRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let sourceURL = macosRoot.appendingPathComponent(
+            "Sources/CodexRemoteMac/Audio/BlackHoleAudioInputBridge.swift"
+        )
+        let source = try String(contentsOf: sourceURL, encoding: .utf8)
+
+        let receive = try XCTUnwrap(source.range(of: "try restartEngineIfNeeded()"))
+        let schedule = try XCTUnwrap(source.range(of: "try schedule(samples: codec.decode(frame))"))
+        XCTAssertLessThan(receive.lowerBound, schedule.lowerBound)
+        XCTAssertTrue(source.contains("guard !engine.isRunning else { return }"))
+        XCTAssertTrue(source.contains("try engine.start()"))
+    }
+
     func testHoldEndRecoversWhenKeyUpFailsAfterSuccessfulBeginKeyDown() async throws {
         let emitter = RecordingBlackHoleHotkeyEmitter(isAuthorized: true, failUpAttempts: 1)
         let bridge = makeBridge(mode: .hold, emitter: emitter)
@@ -140,8 +172,8 @@ final class BlackHoleAudioInputBridgeTests: XCTestCase {
         ])
     }
 
-    func testHoldEndReleasesHotkeyBeforeWaitingForPlayback() async throws {
-        var events: [String] = []
+    func testHoldEndReleasesHotkeyAndRestoresBeforeReturning() async throws {
+        var operations: [String] = []
         let emitter = RecordingBlackHoleHotkeyEmitter(isAuthorized: true)
         let bridge = BlackHoleAudioInputBridge(
             hotkeyText: "⌥Space",
@@ -149,12 +181,7 @@ final class BlackHoleAudioInputBridgeTests: XCTestCase {
             blackHoleDeviceID: 11,
             originalInputDeviceID: 22,
             emitter: emitter,
-            playbackCompletionOperation: {
-                events.append(emitter.events.contains { event in
-                    if case .up = event { return true }
-                    return false
-                } ? "released" : "not-released")
-            }
+            setDefaultInputDeviceIDOperation: { id in operations.append("input-\(id)") }
         )
 
         try bridge.begin(firstAudioSequence: 1)
@@ -164,7 +191,7 @@ final class BlackHoleAudioInputBridgeTests: XCTestCase {
             .down(49, .maskAlternate),
             .up(49, .maskAlternate),
         ])
-        XCTAssertEqual(events, ["released"])
+        XCTAssertEqual(operations, ["input-11", "input-22"])
     }
 
     func testModifierOnlyCombinationUsesHoldMode() async throws {
@@ -192,12 +219,15 @@ final class BlackHoleAudioInputBridgeTests: XCTestCase {
 
     func testModifierOnlyCombinationCanCompleteTwoConsecutiveTransactions() async throws {
         let emitter = RecordingBlackHoleHotkeyEmitter(isAuthorized: true)
+        var operations: [String] = []
         let bridge = BlackHoleAudioInputBridge(
             hotkeyText: "⌘⌥",
             hotkeyMode: .hold,
             blackHoleDeviceID: 11,
             originalInputDeviceID: 22,
-            emitter: emitter
+            emitter: emitter,
+            setDefaultInputDeviceIDOperation: { id in operations.append("input-\(id)") },
+            configureEngineOperation: { id in operations.append("engine-\(id)") }
         )
 
         try bridge.begin(firstAudioSequence: 1)
@@ -216,6 +246,10 @@ final class BlackHoleAudioInputBridgeTests: XCTestCase {
             .down(58, [.maskCommand, .maskAlternate, leftCommand, leftOption]),
             .up(58, [.maskCommand, leftCommand]),
             .up(55, []),
+        ])
+        XCTAssertEqual(operations, [
+            "input-11", "engine-11", "input-22",
+            "input-11", "engine-11", "input-22",
         ])
     }
 

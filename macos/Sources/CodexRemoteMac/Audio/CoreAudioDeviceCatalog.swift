@@ -9,6 +9,8 @@ public struct CoreAudioDevice: Equatable, Sendable {
 }
 
 public struct CoreAudioDeviceCatalog: Sendable {
+    private static let defaultInputSettlingDelay: TimeInterval = 0.2
+
     public init() {}
 
     public func blackHole2ch() -> CoreAudioDevice? {
@@ -38,9 +40,31 @@ public struct CoreAudioDeviceCatalog: Sendable {
             mScope: kAudioObjectPropertyScopeGlobal,
             mElement: kAudioObjectPropertyElementMain
         )
+        if defaultInputDeviceID() == id { return }
+
+        let systemObject = AudioObjectID(kAudioObjectSystemObject)
+        let changed = DispatchSemaphore(value: 0)
+        let listenerQueue = DispatchQueue(
+            label: "net.codexremote.default-input-change",
+            qos: .userInitiated
+        )
+        let listener: AudioObjectPropertyListenerBlock = { _, _ in
+            changed.signal()
+        }
+        let addStatus = AudioObjectAddPropertyListenerBlock(
+            systemObject,
+            &address,
+            listenerQueue,
+            listener
+        )
+        guard addStatus == noErr else { throw AudioInputBridgeError.audioSystemFailure }
+        defer {
+            AudioObjectRemovePropertyListenerBlock(systemObject, &address, listenerQueue, listener)
+        }
+
         var mutableID = id
         let status = AudioObjectSetPropertyData(
-            AudioObjectID(kAudioObjectSystemObject),
+            systemObject,
             &address,
             0,
             nil,
@@ -48,6 +72,14 @@ public struct CoreAudioDeviceCatalog: Sendable {
             &mutableID
         )
         guard status == noErr else { throw AudioInputBridgeError.audioSystemFailure }
+        guard changed.wait(timeout: .now() + 1) == .success,
+              defaultInputDeviceID() == id
+        else { throw AudioInputBridgeError.audioSystemFailure }
+
+        // HAL publishes the property change before AVAudioEngine finishes its
+        // own device reconfiguration. Starting inside that window is stopped
+        // by the delayed configuration callback.
+        Thread.sleep(forTimeInterval: Self.defaultInputSettlingDelay)
     }
 
     private func devices() -> [CoreAudioDevice] {

@@ -1,5 +1,6 @@
 import CodexRemoteCore
 import Foundation
+import OSLog
 
 public protocol SessionClient: Sendable {
     func activeSessions(limit: Int) async -> [RemoteSession]
@@ -13,6 +14,7 @@ extension SessionService: SessionClient {}
 
 @MainActor
 public final class MacClientCoordinator {
+    private static let logger = Logger(subsystem: "CodexRemote", category: "MacClientCoordinator")
     public private(set) var deviceInformation: DeviceInformation?
     public private(set) var selectedSessionKey: UInt16?
     public var onSnapshotChange: ((ClientSnapshot) -> Void)?
@@ -200,6 +202,7 @@ public final class MacClientCoordinator {
             do {
                 try audioInput.receive(frame)
             } catch {
+                Self.logger.error("PTT audio frame failed: \(String(describing: error), privacy: .public)")
                 audioInput.abort()
                 activePTTSessionKey = nil
             }
