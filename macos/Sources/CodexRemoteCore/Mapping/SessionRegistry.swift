@@ -72,6 +72,20 @@ public actor SessionRegistry {
         return session
     }
 
+    @discardableResult
+    public func unregisterLaunch(launcherInstanceID: String) -> Bool {
+        guard let remoteSessionID = remoteIDByLauncher.removeValue(forKey: launcherInstanceID),
+              let session = sessionsByRemoteID.removeValue(forKey: remoteSessionID) else {
+            return false
+        }
+
+        remoteIDByTerminal.removeValue(forKey: session.terminalTargetID)
+        if let providerSessionID = session.providerSessionID {
+            remoteIDByProvider.removeValue(forKey: providerSessionID)
+        }
+        return true
+    }
+
     public func session(remoteSessionID: String) throws -> RemoteSession {
         guard let session = sessionsByRemoteID[remoteSessionID] else {
             throw SessionRegistryError.unknownRemoteSession(remoteSessionID)

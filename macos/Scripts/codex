@@ -39,14 +39,17 @@ real_codex=$(find_real_codex) || {
 }
 
 launcher_id=${$(uuidgen 2>/dev/null):l}
+launch_registered=0
 
 if [[ -n "$launcher_id" ]]; then
   export CODEX_REMOTE_INSTANCE_ID="$launcher_id"
 
   if [[ -x "$helper" ]]; then
-    "$helper" register-launch --socket "$socket_path" --launcher "$launcher_id" || {
+    if "$helper" register-launch --socket "$socket_path" --launcher "$launcher_id"; then
+      launch_registered=1
+    else
       print -u2 -r -- "codex shim: helper register-launch failed"
-    }
+    fi
   else
     print -u2 -r -- "codex shim: helper unavailable"
   fi
@@ -55,4 +58,13 @@ else
   print -u2 -r -- "codex shim: launcher id unavailable"
 fi
 
-exec "$real_codex" "$@"
+"$real_codex" "$@"
+codex_exit=$?
+
+if (( launch_registered )); then
+  "$helper" unregister-launch --socket "$socket_path" --launcher "$launcher_id" || {
+    print -u2 -r -- "codex shim: helper unregister-launch failed"
+  }
+fi
+
+exit "$codex_exit"

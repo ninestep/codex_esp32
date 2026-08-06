@@ -4,6 +4,19 @@ import XCTest
 @testable import CodexRemoteMac
 
 final class SessionServiceTests: XCTestCase {
+    func testUnregisterLaunchRemovesActiveSessionIdempotently() async throws {
+        let service = SessionService(controller: RecordingTerminalController(), idGenerator: { "remote-1" })
+        _ = try await service.registerFocusedLaunch(launcherInstanceID: "launch-1")
+        _ = try await service.receiveHook(sessionStart("codex-99", launcherInstanceID: "launch-1"))
+
+        let firstRemoval = await service.unregisterLaunch(launcherInstanceID: "launch-1")
+        let secondRemoval = await service.unregisterLaunch(launcherInstanceID: "launch-1")
+        let remainingSessions = await service.activeSessions()
+        XCTAssertTrue(firstRemoval)
+        XCTAssertFalse(secondRemoval)
+        XCTAssertEqual(remainingSessions, [])
+    }
+
     func testSendKeyFocusesCapturedLaunchTerminalBeforeSendingKey() async throws {
         let controller = RecordingTerminalController()
         let service = SessionService(controller: controller, idGenerator: { "remote-1" })

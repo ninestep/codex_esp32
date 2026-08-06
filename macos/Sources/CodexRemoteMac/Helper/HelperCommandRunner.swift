@@ -64,6 +64,8 @@ public struct HelperCommandRunner: Sendable {
         switch command {
         case "register-launch":
             return await registerLaunch(arguments: Array(arguments.dropFirst()))
+        case "unregister-launch":
+            return await unregisterLaunch(arguments: Array(arguments.dropFirst()))
         case "hook":
             return await hook(arguments: Array(arguments.dropFirst()), stdin: stdin, environment: environment)
         case "list":
@@ -78,6 +80,17 @@ public struct HelperCommandRunner: Sendable {
             return usage("serve is only available through the process entrypoint")
         default:
             return usage("unknown command: \(command)")
+        }
+    }
+
+    private func unregisterLaunch(arguments: [String]) async -> HelperCommandResult {
+        do {
+            let parser = try HelperOptionParser(arguments: arguments, valuedOptions: ["--socket", "--launcher"], flags: [])
+            let socketURL = try parser.requiredURL("--socket")
+            let launcherID = try parser.required("--launcher")
+            return await sendExpectingOK(.unregisterLaunch(launcherID: launcherID), to: socketURL)
+        } catch {
+            return usage(String(describing: error))
         }
     }
 

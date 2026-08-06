@@ -25,6 +25,18 @@ final class HelperCommandTests: XCTestCase {
         XCTAssertEqual(try LocalIPCCodec().decodeRequest(encoded), request)
     }
 
+    func testIPCRequestCodecRoundTripsUnregisterLaunch() throws {
+        let request = LocalIPCRequest.unregisterLaunch(launcherID: "launcher-1")
+
+        let encoded = try LocalIPCCodec().encodeRequest(request)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded.dropLast()) as? [String: Any])
+
+        XCTAssertEqual(object["version"] as? Int, 1)
+        XCTAssertEqual(object["type"] as? String, "unregisterLaunch")
+        XCTAssertEqual(object["launcherID"] as? String, "launcher-1")
+        XCTAssertEqual(try LocalIPCCodec().decodeRequest(encoded), request)
+    }
+
     func testIPCResponseCodecEncodesSessionsWithoutInternalErrorText() throws {
         let session = RemoteSession(
             remoteSessionID: "remote-1",
@@ -215,6 +227,22 @@ final class HelperCommandTests: XCTestCase {
         XCTAssertEqual(object["version"] as? Int, 1)
         let sessions = try XCTUnwrap(object["sessions"] as? [[String: Any]])
         XCTAssertEqual(sessions.first?["remoteSessionID"] as? String, "remote-1")
+    }
+
+    func testUnregisterLaunchCommandSendsLauncherRequest() async {
+        let client = RecordingIPCClient(response: .ok)
+        let result = await HelperCommandRunner(socketClient: client).run(
+            arguments: ["unregister-launch", "--socket", "/tmp/codex.sock", "--launcher", "launcher-1"],
+            stdin: Data(),
+            environment: [:]
+        )
+
+        XCTAssertEqual(result.exitCode, 0)
+        let calls = await client.recordedCalls()
+        XCTAssertEqual(
+            calls,
+            [IPCClientCall(socketPath: "/tmp/codex.sock", request: .unregisterLaunch(launcherID: "launcher-1"))]
+        )
     }
 
     func testHookCommandRejectsMalformedRawHookBeforeContactingDaemon() async {
@@ -452,6 +480,25 @@ final class HelperCommandTests: XCTestCase {
                 .key(.escape, "term-7"),
             ]
         )
+    }
+
+    func testSessionIPCDispatcherUnregistersLaunchAndPublishesSessionChange() async throws {
+        let service = SessionService(controller: HelperRecordingTerminalController(), idGenerator: { "remote-1" })
+        let changes = AsyncCounter()
+        let dispatcher = SessionIPCDispatcher(service: service) {
+            await changes.increment()
+        }
+        let registerResponse = await dispatcher.handle(.registerLaunch(launcherID: "launcher-1"))
+        XCTAssertEqual(registerResponse, .ok)
+
+        let firstUnregisterResponse = await dispatcher.handle(.unregisterLaunch(launcherID: "launcher-1"))
+        let secondUnregisterResponse = await dispatcher.handle(.unregisterLaunch(launcherID: "launcher-1"))
+        let remainingSessions = await service.activeSessions()
+        let changeCount = await changes.value()
+        XCTAssertEqual(firstUnregisterResponse, .ok)
+        XCTAssertEqual(secondUnregisterResponse, .ok)
+        XCTAssertEqual(remainingSessions, [])
+        XCTAssertEqual(changeCount, 2)
     }
 
     func testSessionIPCDispatcherReturnsFixedErrorCodeWithoutLeakingServiceError() async {
@@ -917,5 +964,17 @@ private func createStaleUnixSocket(at socketURL: URL) throws {
     }
     guard bound == 0 else {
         throw POSIXError(.init(rawValue: errno) ?? .EIO)
+    }
+}
+
+private actor AsyncCounter {
+    private var count = 0
+
+    func increment() {
+        count += 1
+    }
+
+    func value() -> Int {
+        count
     }
 }

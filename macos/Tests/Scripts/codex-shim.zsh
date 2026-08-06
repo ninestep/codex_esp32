@@ -31,7 +31,7 @@ cat > "$HELPER" <<'EOS'
 #!/bin/zsh
 set -euo pipefail
 
-print -r -- "$@" > "$HELPER_ARGS"
+print -r -- "$@" >> "$HELPER_ARGS"
 print -r -- "${CODEX_REMOTE_INSTANCE_ID:-}" > "$HELPER_ENV"
 
 if [[ "$1" == "hook" ]]; then
@@ -102,6 +102,25 @@ launcher=$(<"$TMP_DIR/helper-launcher")
 [[ "$launcher" == ????????-????-????-????-???????????? ]] || fail "launcher is not UUID-like: $launcher"
 assert_file_equals "$TMP_DIR/helper-launcher" "$TMP_DIR/helper-env"
 assert_file_equals "$TMP_DIR/helper-launcher" "$TMP_DIR/real-env"
+grep -q -- "^register-launch --socket $SOCKET --launcher $launcher$" "$TMP_DIR/helper-args" || fail "missing register-launch call"
+grep -q -- "^unregister-launch --socket $SOCKET --launcher $launcher$" "$TMP_DIR/helper-args" || fail "missing unregister-launch call"
+
+set +e
+HELPER_ARGS="$TMP_DIR/nonzero-helper-args" \
+HELPER_ENV="$TMP_DIR/nonzero-helper-env" \
+HELPER_LAUNCHER="$TMP_DIR/nonzero-helper-launcher" \
+REAL_ARGS="$TMP_DIR/nonzero-real-args" \
+REAL_ENV="$TMP_DIR/nonzero-real-env" \
+CODEX_REMOTE_HELPER="$HELPER" \
+CODEX_REMOTE_SOCKET="$SOCKET" \
+CODEX_REMOTE_REAL_CODEX="$REAL_CODEX" \
+REAL_EXIT=23 \
+zsh "$SHIM" "nonzero exit" > "$TMP_DIR/nonzero-stdout" 2> "$TMP_DIR/nonzero-stderr"
+exit_status=$?
+set -e
+[[ "$exit_status" == 23 ]] || fail "expected real codex exit 23 after unregister, got $exit_status"
+nonzero_launcher=$(<"$TMP_DIR/nonzero-helper-launcher")
+grep -q -- "^unregister-launch --socket $SOCKET --launcher $nonzero_launcher$" "$TMP_DIR/nonzero-helper-args" || fail "missing unregister after nonzero exit"
 
 mkdir -p "$TMP_DIR/trailing-tmp"
 HELPER_ARGS="$TMP_DIR/default-helper-args" \

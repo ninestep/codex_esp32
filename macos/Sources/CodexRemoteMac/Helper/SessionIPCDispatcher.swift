@@ -20,6 +20,11 @@ public struct SessionIPCDispatcher: Sendable {
                 _ = try await service.registerFocusedLaunch(launcherInstanceID: launcherID)
                 await onSessionsChanged()
                 return .ok
+            case .unregisterLaunch(let launcherID):
+                if await service.unregisterLaunch(launcherInstanceID: launcherID) {
+                    await onSessionsChanged()
+                }
+                return .ok
             case .hook(let payload):
                 _ = try await service.receiveHook(payload)
                 await onSessionsChanged()

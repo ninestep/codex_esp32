@@ -91,6 +91,11 @@ public actor SessionService {
     }
 
     @discardableResult
+    public func unregisterLaunch(launcherInstanceID: String) async -> Bool {
+        await registry.unregisterLaunch(launcherInstanceID: launcherInstanceID)
+    }
+
+    @discardableResult
     public func selectSession(remoteSessionID: String) async throws -> RemoteSession {
         let session = try await registry.session(remoteSessionID: remoteSessionID)
 

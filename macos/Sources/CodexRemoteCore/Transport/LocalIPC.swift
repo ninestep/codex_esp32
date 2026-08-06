@@ -15,6 +15,7 @@ public enum LocalIPCErrorCode: String, Codable, Equatable, Sendable {
 
 public enum LocalIPCRequest: Equatable, Sendable {
     case registerLaunch(launcherID: String)
+    case unregisterLaunch(launcherID: String)
     case hook(HookPayload)
     case list
     case focus(remoteSessionID: String)
@@ -35,6 +36,7 @@ extension LocalIPCRequest: Codable {
 
     private enum RequestType: String, Codable {
         case registerLaunch
+        case unregisterLaunch
         case hook
         case list
         case focus
@@ -51,6 +53,8 @@ extension LocalIPCRequest: Codable {
         switch try container.decode(RequestType.self, forKey: .type) {
         case .registerLaunch:
             self = .registerLaunch(launcherID: try container.decode(String.self, forKey: .launcherID))
+        case .unregisterLaunch:
+            self = .unregisterLaunch(launcherID: try container.decode(String.self, forKey: .launcherID))
         case .hook:
             self = .hook(try container.decode(HookPayload.self, forKey: .payload))
         case .list:
@@ -77,6 +81,9 @@ extension LocalIPCRequest: Codable {
         switch self {
         case .registerLaunch(let launcherID):
             try container.encode(RequestType.registerLaunch, forKey: .type)
+            try container.encode(launcherID, forKey: .launcherID)
+        case .unregisterLaunch(let launcherID):
+            try container.encode(RequestType.unregisterLaunch, forKey: .type)
             try container.encode(launcherID, forKey: .launcherID)
         case .hook(let payload):
             try container.encode(RequestType.hook, forKey: .type)

@@ -86,6 +86,49 @@ final class SessionRegistryTests: XCTestCase {
         }
     }
 
+    func testUnregisterLaunchRemovesSessionAndAllReverseMappingsIdempotently() async throws {
+        let registry = SessionRegistry(idGenerator: { "remote-1" })
+        try await registry.registerLaunch(
+            launcherInstanceID: "launch-1",
+            terminalTargetID: "term-7",
+            displayTitle: "ESP32",
+            workingDirectoryLabel: "~/esp32"
+        )
+        _ = try await registry.bindProviderSession(
+            launcherInstanceID: "launch-1",
+            providerSessionID: "codex-99"
+        )
+
+        let firstRemoval = await registry.unregisterLaunch(launcherInstanceID: "launch-1")
+        let secondRemoval = await registry.unregisterLaunch(launcherInstanceID: "launch-1")
+        let remainingSessions = await registry.activeSessions()
+        XCTAssertTrue(firstRemoval)
+        XCTAssertFalse(secondRemoval)
+        XCTAssertEqual(remainingSessions, [])
+
+        do {
+            _ = try await registry.session(remoteSessionID: "remote-1")
+            XCTFail("Expected remote session to be removed")
+        } catch {
+            XCTAssertEqual(error as? SessionRegistryError, .unknownRemoteSession("remote-1"))
+        }
+        do {
+            _ = try await registry.session(providerSessionID: "codex-99")
+            XCTFail("Expected provider mapping to be removed")
+        } catch {
+            XCTAssertEqual(error as? SessionRegistryError, .unknownRemoteSession("codex-99"))
+        }
+
+        try await registry.registerLaunch(
+            launcherInstanceID: "launch-1",
+            terminalTargetID: "term-7",
+            displayTitle: "ESP32 replacement",
+            workingDirectoryLabel: "~/esp32"
+        )
+        let replacementTitles = await registry.activeSessions().map(\.displayTitle)
+        XCTAssertEqual(replacementTitles, ["ESP32 replacement"])
+    }
+
     func testSessionByProviderIDReturnsSameRemoteSession() async throws {
         let registry = SessionRegistry(idGenerator: { "remote-fixed" })
         try await registry.registerLaunch(
