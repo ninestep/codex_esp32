@@ -54,6 +54,8 @@ final class MacClientCoordinatorTests: XCTestCase {
         try await coordinator.receive(message: .terminalKey(requestID: 25, sessionKey: 1, key: .down))
         try await coordinator.receive(message: .terminalKey(requestID: 26, sessionKey: 1, key: .left))
         try await coordinator.receive(message: .terminalKey(requestID: 27, sessionKey: 1, key: .right))
+        try await coordinator.receive(message: .terminalKey(requestID: 28, sessionKey: 1, key: .backspace))
+        try await coordinator.receive(message: .terminalKey(requestID: 29, sessionKey: 1, key: .clearLine))
 
         let sentKeys = await service.sentKeys()
         XCTAssertEqual(sentKeys, [
@@ -63,6 +65,8 @@ final class MacClientCoordinatorTests: XCTestCase {
             SentKey(key: .down, remoteSessionID: "remote-1"),
             SentKey(key: .left, remoteSessionID: "remote-1"),
             SentKey(key: .right, remoteSessionID: "remote-1"),
+            SentKey(key: .backspace, remoteSessionID: "remote-1"),
+            SentKey(key: .clearLine, remoteSessionID: "remote-1"),
         ])
         XCTAssertEqual(try transport.decodedMessages(), [
             .actionResult(requestID: 20, result: .invalidState, detail: "请先进入会话"),
@@ -73,6 +77,8 @@ final class MacClientCoordinatorTests: XCTestCase {
             .actionResult(requestID: 25, result: .success, detail: ""),
             .actionResult(requestID: 26, result: .success, detail: ""),
             .actionResult(requestID: 27, result: .success, detail: ""),
+            .actionResult(requestID: 28, result: .success, detail: ""),
+            .actionResult(requestID: 29, result: .success, detail: ""),
         ])
     }
 

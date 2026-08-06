@@ -1,5 +1,5 @@
 public enum TerminalKey: String, Codable, Sendable {
-    case enter, escape, up, down, left, right
+    case enter, escape, up, down, left, right, backspace, clearLine
 }
 
 public enum TerminalShortcut: String, Codable, Sendable {

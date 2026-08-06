@@ -174,6 +174,17 @@ static void shortcut_clicked(lv_event_t *event)
     actions.terminal_shortcut(selected_session_key, (uint8_t)shortcut, actions.context);
 }
 
+static void delete_input(lv_event_t *event)
+{
+    note_interaction();
+    if (interaction_locked) return;
+    if (actions.terminal_key == NULL || selected_session_key == 0) return;
+    uint8_t key = lv_event_get_code(event) == LV_EVENT_LONG_PRESSED
+        ? CR_TERMINAL_KEY_CLEAR_LINE
+        : CR_TERMINAL_KEY_BACKSPACE;
+    actions.terminal_key(selected_session_key, key, actions.context);
+}
+
 static int32_t detail_press_y;
 
 static void detail_pointer(lv_event_t *event)
@@ -309,6 +320,12 @@ void cr_ui_init(const cr_ui_callbacks_t *config)
         detail_content_page, "确认  ENTER", 242, 338, 115, 52,
         key_clicked, (void *)(uintptr_t)CR_TERMINAL_KEY_ENTER
     );
+    lv_obj_t *delete_button = make_button(detail_content_page, "删除");
+    lv_obj_set_size(delete_button, 108, 52);
+    lv_obj_set_pos(delete_button, 365, 338);
+    lv_obj_set_style_bg_color(delete_button, lv_color_hex(0x991b1b), 0);
+    lv_obj_add_event_cb(delete_button, delete_input, LV_EVENT_SHORT_CLICKED, NULL);
+    lv_obj_add_event_cb(delete_button, delete_input, LV_EVENT_LONG_PRESSED, NULL);
 
     shortcut_page = lv_obj_create(detail_page);
     lv_obj_remove_style_all(shortcut_page);

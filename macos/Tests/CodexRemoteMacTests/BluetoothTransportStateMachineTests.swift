@@ -31,7 +31,7 @@ final class BluetoothTransportStateMachineTests: XCTestCase {
         XCTAssertEqual(machine.state, .unavailable(.unauthorized))
     }
 
-    func testReadyRequiresAllSixCharacteristics() {
+    func testReadyRequiresAllSixCharacteristicsAndThreeNotificationConfirmations() {
         var machine = connectedMachine()
         let incomplete = Set(BluetoothCharacteristic.allCases.dropLast())
 
@@ -41,9 +41,38 @@ final class BluetoothTransportStateMachineTests: XCTestCase {
             .subscribe(.controlToHost),
             .subscribe(.audioToHost),
             .resetSubscription(.deviceInfo),
-            .connectionReady,
         ])
+        XCTAssertEqual(machine.state, .subscribingNotifications(id: "device-1"))
+
+        XCTAssertTrue(machine.handle(.notificationStateUpdated(
+            characteristic: .controlToHost,
+            isNotifying: true,
+            succeeded: true
+        )).isEmpty)
+        XCTAssertTrue(machine.handle(.notificationStateUpdated(
+            characteristic: .audioToHost,
+            isNotifying: true,
+            succeeded: true
+        )).isEmpty)
+        XCTAssertEqual(machine.state, .subscribingNotifications(id: "device-1"))
+        XCTAssertEqual(machine.handle(.notificationStateUpdated(
+            characteristic: .deviceInfo,
+            isNotifying: true,
+            succeeded: true
+        )), [.connectionReady, .read(.deviceInfo)])
         XCTAssertEqual(machine.state, .ready(id: "device-1"))
+    }
+
+    func testNotificationSubscriptionFailureCancelsConnection() {
+        var machine = connectedMachine()
+        _ = machine.handle(.characteristicsDiscovered(Set(BluetoothCharacteristic.allCases)))
+
+        XCTAssertEqual(machine.handle(.notificationStateUpdated(
+            characteristic: .deviceInfo,
+            isNotifying: false,
+            succeeded: false
+        )), [.cancelConnection(id: "device-1")])
+        XCTAssertEqual(machine.state, .subscribingNotifications(id: "device-1"))
     }
 
     func testDisconnectResetsAndRestartsScanWhenPoweredOn() {

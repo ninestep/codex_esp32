@@ -81,11 +81,19 @@ public final class CoreBluetoothTransport: NSObject, BluetoothTransport {
                 }
             case let .resetSubscription(role):
                 if let characteristic = characteristics[role] {
-                    pendingSubscriptionResets.insert(role)
-                    peripheral?.setNotifyValue(false, for: characteristic)
+                    if characteristic.isNotifying {
+                        pendingSubscriptionResets.insert(role)
+                        peripheral?.setNotifyValue(false, for: characteristic)
+                    } else {
+                        peripheral?.setNotifyValue(true, for: characteristic)
+                    }
                 }
             case .connectionReady:
                 break
+            case let .read(role):
+                if let characteristic = characteristics[role] {
+                    peripheral?.readValue(for: characteristic)
+                }
             }
         }
         onStateChange?(stateMachine.state)
@@ -169,10 +177,24 @@ extension CoreBluetoothTransport: @preconcurrency CBPeripheralDelegate {
     }
 
     public func peripheral(_ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?) {
-        guard let role = role(for: characteristic.uuid),
-              pendingSubscriptionResets.remove(role) != nil
-        else { return }
-        peripheral.setNotifyValue(true, for: characteristic)
+        guard let role = role(for: characteristic.uuid) else { return }
+        if pendingSubscriptionResets.remove(role) != nil {
+            guard error == nil, !characteristic.isNotifying else {
+                execute(stateMachine.handle(.notificationStateUpdated(
+                    characteristic: role,
+                    isNotifying: characteristic.isNotifying,
+                    succeeded: false
+                )))
+                return
+            }
+            peripheral.setNotifyValue(true, for: characteristic)
+            return
+        }
+        execute(stateMachine.handle(.notificationStateUpdated(
+            characteristic: role,
+            isNotifying: characteristic.isNotifying,
+            succeeded: error == nil && characteristic.isNotifying
+        )))
     }
 
     public func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {

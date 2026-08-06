@@ -5,12 +5,14 @@ import XCTest
 final class BLEMessageCodecTests: XCTestCase {
     private let codec = BLEMessageCodec()
 
-    func testProtocolV11DefinesNavigationAndShortcutContract() {
-        XCTAssertEqual(BLEProtocolVersion.current, BLEProtocolVersion(major: 1, minor: 1))
+    func testProtocolV12DefinesNavigationShortcutAndEditingContract() {
+        XCTAssertEqual(BLEProtocolVersion.current, BLEProtocolVersion(major: 1, minor: 2))
         XCTAssertEqual(RemoteTerminalKey.up.rawValue, 3)
         XCTAssertEqual(RemoteTerminalKey.down.rawValue, 4)
         XCTAssertEqual(RemoteTerminalKey.left.rawValue, 5)
         XCTAssertEqual(RemoteTerminalKey.right.rawValue, 6)
+        XCTAssertEqual(RemoteTerminalKey.backspace.rawValue, 7)
+        XCTAssertEqual(RemoteTerminalKey.clearLine.rawValue, 8)
         XCTAssertEqual(RemoteTerminalShortcut.newSession.rawValue, 1)
         XCTAssertEqual(RemoteTerminalShortcut.quit.rawValue, 2)
         XCTAssertEqual(RemoteTerminalShortcut.write.rawValue, 3)

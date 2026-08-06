@@ -58,10 +58,16 @@ public struct GhosttyAppleScriptController: TerminalController, Sendable {
 
     public func sendKey(_ key: TerminalKey, to terminalTargetID: String) async throws {
         let terminalID = try validatedTerminalID(terminalTargetID)
+        let keyCommand = switch key {
+        case .clearLine:
+            #"send key "u" modifiers "control" to targetTerm"#
+        default:
+            #"send key "\#(key.rawValue)" to targetTerm"#
+        }
         _ = try await runner.run(source: """
         tell application id "com.mitchellh.ghostty"
             set targetTerm to terminal id "\(terminalID)"
-            send key "\(key.rawValue)" to targetTerm
+            \(keyCommand)
         end tell
         """)
     }

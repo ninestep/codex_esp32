@@ -41,10 +41,15 @@ final class AppSourceWiringTests: XCTestCase {
         )
         let source = try String(contentsOf: sourceURL, encoding: .utf8)
 
+        XCTAssertTrue(source.contains("if characteristic.isNotifying"))
         XCTAssertTrue(source.contains("pendingSubscriptionResets.insert(role)"))
         XCTAssertTrue(source.contains("setNotifyValue(false, for: characteristic)"))
-        XCTAssertTrue(source.contains("pendingSubscriptionResets.remove(role) != nil"))
+        XCTAssertTrue(source.contains("pendingSubscriptionResets.remove(role)"))
         XCTAssertTrue(source.contains("setNotifyValue(true, for: characteristic)"))
+        XCTAssertTrue(source.contains("succeeded: error == nil && characteristic.isNotifying"))
+        XCTAssertTrue(source.contains("isNotifying: characteristic.isNotifying"))
+        XCTAssertTrue(source.contains("case let .read(role)"))
+        XCTAssertTrue(source.contains("peripheral?.readValue(for: characteristic)"))
     }
 
     func testSettingsRecommendModifierOnlyShortcutWithoutFunctionKeyEntry() throws {

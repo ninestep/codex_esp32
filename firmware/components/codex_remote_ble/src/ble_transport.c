@@ -122,20 +122,11 @@ static int notify_fragmented(
     return 0;
 }
 
-static int send_message_on_connection(
-    const cr_message_t *message,
-    uint16_t value_handle,
-    bool indicate,
-    uint16_t conn_handle
-)
+static cr_result_t encode_message_locked(const cr_message_t *message, size_t *envelope_length)
 {
-    xSemaphoreTake(tx_lock, portMAX_DELAY);
     size_t payload_length = 0;
     cr_result_t result = cr_message_encode(message, tx_payload, sizeof(tx_payload), &payload_length);
-    if (result != CR_OK) {
-        xSemaphoreGive(tx_lock);
-        return BLE_HS_EAPP;
-    }
+    if (result != CR_OK) return result;
     cr_envelope_view_t envelope = {
         .version_major = CR_PROTOCOL_MAJOR,
         .version_minor = CR_PROTOCOL_MINOR,
@@ -145,13 +136,30 @@ static int send_message_on_connection(
         .payload = tx_payload,
         .payload_length = payload_length,
     };
+    return cr_envelope_encode(&envelope, tx_envelope, sizeof(tx_envelope), envelope_length);
+}
+
+static int send_message_on_connection(
+    const cr_message_t *message,
+    uint16_t value_handle,
+    bool indicate,
+    uint16_t conn_handle
+)
+{
+    xSemaphoreTake(tx_lock, portMAX_DELAY);
     size_t envelope_length = 0;
-    result = cr_envelope_encode(&envelope, tx_envelope, sizeof(tx_envelope), &envelope_length);
+    cr_result_t result = encode_message_locked(message, &envelope_length);
     if (result != CR_OK) {
         xSemaphoreGive(tx_lock);
         return BLE_HS_EAPP;
     }
-    int rc = notify_fragmented(conn_handle, value_handle, indicate, tx_envelope, envelope_length);
+    int rc = notify_fragmented(
+        conn_handle,
+        value_handle,
+        indicate,
+        tx_envelope,
+        envelope_length
+    );
     xSemaphoreGive(tx_lock);
     return rc;
 }
@@ -161,10 +169,10 @@ static int send_message(const cr_message_t *message, uint16_t value_handle, bool
     return send_message_on_connection(message, value_handle, indicate, connection_handle);
 }
 
-static int send_device_info(uint16_t conn_handle)
+static cr_message_t make_device_info_message(void)
 {
     static const uint8_t firmware[] = "0.1.0";
-    cr_message_t message = {
+    return (cr_message_t){
         .type = CR_MESSAGE_DEVICE_INFO,
         .body.device_info = {
             .protocol_major = CR_PROTOCOL_MAJOR,
@@ -174,7 +182,40 @@ static int send_device_info(uint16_t conn_handle)
             .battery_percent = 100,
         },
     };
+}
+
+static int send_device_info(uint16_t conn_handle)
+{
+    cr_message_t message = make_device_info_message();
     return send_message_on_connection(&message, device_info_handle, false, conn_handle);
+}
+
+static int append_device_info_packet(struct os_mbuf *output)
+{
+    if (output == NULL) return BLE_ATT_ERR_UNLIKELY;
+
+    cr_message_t message = make_device_info_message();
+    xSemaphoreTake(tx_lock, portMAX_DELAY);
+    size_t envelope_length = 0;
+    cr_result_t result = encode_message_locked(&message, &envelope_length);
+    if (result != CR_OK) {
+        xSemaphoreGive(tx_lock);
+        return BLE_ATT_ERR_UNLIKELY;
+    }
+
+    uint32_t message_id = next_message_id++;
+    const uint16_t fragment_index = 0;
+    const uint16_t fragment_count = 1;
+    uint8_t header[CR_FRAGMENT_HEADER_BYTES] = {
+        (uint8_t)message_id, (uint8_t)(message_id >> 8),
+        (uint8_t)(message_id >> 16), (uint8_t)(message_id >> 24),
+        (uint8_t)fragment_index, (uint8_t)(fragment_index >> 8),
+        (uint8_t)fragment_count, (uint8_t)(fragment_count >> 8),
+    };
+    int rc = os_mbuf_append(output, header, sizeof(header));
+    if (rc == 0) rc = os_mbuf_append(output, tx_envelope, envelope_length);
+    xSemaphoreGive(tx_lock);
+    return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
 }
 
 static void queue_device_info(uint16_t conn_handle)
@@ -243,9 +284,7 @@ static int gatt_access(uint16_t conn, uint16_t attr, struct ble_gatt_access_ctxt
         return accept_write(reassembler, ctxt->om);
     }
     if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR && attr == device_info_handle) {
-        static const uint8_t version[] = "Codex Remote 0.1.0";
-        return os_mbuf_append(ctxt->om, version, sizeof(version) - 1) == 0
-            ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+        return append_device_info_packet(ctxt->om);
     }
     (void)conn;
     return BLE_ATT_ERR_UNLIKELY;

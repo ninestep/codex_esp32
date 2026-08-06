@@ -172,7 +172,7 @@ cr_result_t cr_message_decode(const cr_envelope_view_t *envelope, cr_message_t *
             || !read_u16(&reader, &message->body.terminal_key.session_key)
             || !read_u8(&reader, &message->body.terminal_key.key)) result = CR_ERR_TRUNCATED;
         else if (message->body.terminal_key.key < CR_TERMINAL_KEY_ENTER
-            || message->body.terminal_key.key > CR_TERMINAL_KEY_RIGHT) result = CR_ERR_INVALID_PAYLOAD;
+            || message->body.terminal_key.key > CR_TERMINAL_KEY_CLEAR_LINE) result = CR_ERR_INVALID_PAYLOAD;
         break;
     case CR_MESSAGE_TERMINAL_SHORTCUT:
         if (!read_u32(&reader, &message->body.terminal_shortcut.request_id)
@@ -386,7 +386,7 @@ static cr_result_t encode_body(const cr_message_t *message, writer_t *writer)
         break;
     case CR_MESSAGE_TERMINAL_KEY:
         if (message->body.terminal_key.key < CR_TERMINAL_KEY_ENTER
-            || message->body.terminal_key.key > CR_TERMINAL_KEY_RIGHT) return CR_ERR_INVALID_PAYLOAD;
+            || message->body.terminal_key.key > CR_TERMINAL_KEY_CLEAR_LINE) return CR_ERR_INVALID_PAYLOAD;
         write_u32(writer, message->body.terminal_key.request_id);
         write_u16(writer, message->body.terminal_key.session_key);
         write_u8(writer, message->body.terminal_key.key);

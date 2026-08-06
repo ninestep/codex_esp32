@@ -133,6 +133,8 @@ public final class MacClientCoordinator {
                 case .down: .down
                 case .left: .left
                 case .right: .right
+                case .backspace: .backspace
+                case .clearLine: .clearLine
                 }
                 do {
                     try await self.sessionClient.sendKey(key, remoteSessionID: remoteSessionID)
@@ -232,7 +234,7 @@ public final class MacClientCoordinator {
         case .ready:
             publishSnapshot()
         case .disconnected, .unavailable, .scanning, .connecting, .discoveringService,
-             .discoveringCharacteristics:
+             .discoveringCharacteristics, .subscribingNotifications:
             resetConnection()
         }
     }

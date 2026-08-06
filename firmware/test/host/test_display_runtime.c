@@ -69,6 +69,11 @@ int main(void)
     assert(strstr(ui_source, "快捷键 >") != NULL);
     assert(strstr(ui_source, "< 状态") != NULL);
     assert(strstr(ui_source, "确认  ENTER") != NULL);
+    assert(strstr(ui_source, "删除") != NULL);
+    assert(strstr(ui_source, "LV_EVENT_SHORT_CLICKED") != NULL);
+    assert(strstr(ui_source, "LV_EVENT_LONG_PRESSED") != NULL);
+    assert(strstr(ui_source, "CR_TERMINAL_KEY_BACKSPACE") != NULL);
+    assert(strstr(ui_source, "CR_TERMINAL_KEY_CLEAR_LINE") != NULL);
 
     char font_source[32768];
     read_prefix(

@@ -92,7 +92,8 @@ final class AppModel: ObservableObject {
         case .unavailable(.poweredOn): "蓝牙状态异常"
         case .scanning: "正在查找设备"
         case .connecting: "正在连接"
-        case .discoveringService, .discoveringCharacteristics: "正在建立数据通道"
+        case .discoveringService, .discoveringCharacteristics, .subscribingNotifications:
+            "正在建立数据通道"
         case .ready: "已连接"
         }
     }

@@ -24,5 +24,9 @@ int main(void)
     assert(strstr(source, "xTaskCreatePinnedToCore(") != NULL);
     assert(strstr(source, "device_info_task, \"device_info\"") != NULL);
     assert(strstr(source, "NIMBLE_CORE") != NULL);
+    assert(strstr(source, "return append_device_info_packet(ctxt->om);") != NULL);
+    assert(strstr(source, "const uint16_t fragment_count = 1;") != NULL);
+    assert(strstr(source, "CR_FRAGMENT_HEADER_BYTES") != NULL);
+    assert(strstr(source, "Codex Remote 0.1.0") == NULL);
     return 0;
 }

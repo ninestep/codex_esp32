@@ -7,6 +7,8 @@ public enum RemoteTerminalKey: UInt8, Equatable, Sendable {
     case down = 4
     case left = 5
     case right = 6
+    case backspace = 7
+    case clearLine = 8
 }
 
 public enum RemoteTerminalShortcut: UInt8, Equatable, Sendable {

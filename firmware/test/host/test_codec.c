@@ -116,7 +116,9 @@ static void test_valid_envelopes_round_trip(void)
         {"macos/Fixtures/ble-v1/select-session.hex", CR_MESSAGE_SELECT_SESSION, 1, 6},
         {"macos/Fixtures/ble-v1/terminal-enter.hex", CR_MESSAGE_TERMINAL_KEY, 2, 7},
         {"macos/Fixtures/ble-v1/terminal-up.hex", CR_MESSAGE_TERMINAL_KEY, 3, 7},
-        {"macos/Fixtures/ble-v1/terminal-compact.hex", CR_MESSAGE_TERMINAL_SHORTCUT, 4, 7},
+        {"macos/Fixtures/ble-v1/terminal-backspace.hex", CR_MESSAGE_TERMINAL_KEY, 4, 7},
+        {"macos/Fixtures/ble-v1/terminal-clear-line.hex", CR_MESSAGE_TERMINAL_KEY, 5, 7},
+        {"macos/Fixtures/ble-v1/terminal-compact.hex", CR_MESSAGE_TERMINAL_SHORTCUT, 6, 7},
     };
 
     for (size_t index = 0; index < ARRAY_COUNT(fixtures); index++) {

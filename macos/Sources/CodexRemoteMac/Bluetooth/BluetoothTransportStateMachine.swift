@@ -21,6 +21,7 @@ public enum BluetoothTransportState: Equatable, Sendable {
     case connecting(id: String)
     case discoveringService(id: String)
     case discoveringCharacteristics(id: String)
+    case subscribingNotifications(id: String)
     case ready(id: String)
 }
 
@@ -30,6 +31,11 @@ public enum BluetoothTransportEvent: Equatable, Sendable {
     case connected(id: String)
     case serviceDiscovered
     case characteristicsDiscovered(Set<BluetoothCharacteristic>)
+    case notificationStateUpdated(
+        characteristic: BluetoothCharacteristic,
+        isNotifying: Bool,
+        succeeded: Bool
+    )
     case disconnected(id: String)
 }
 
@@ -43,11 +49,19 @@ public enum BluetoothTransportAction: Equatable, Sendable {
     case subscribe(BluetoothCharacteristic)
     case resetSubscription(BluetoothCharacteristic)
     case connectionReady
+    case read(BluetoothCharacteristic)
 }
 
 public struct BluetoothTransportStateMachine: Sendable {
     public private(set) var state: BluetoothTransportState = .disconnected
     private var centralAvailability: BluetoothCentralAvailability = .poweredOff
+    private var enabledNotifications: Set<BluetoothCharacteristic> = []
+
+    private static let requiredNotifications: Set<BluetoothCharacteristic> = [
+        .controlToHost,
+        .audioToHost,
+        .deviceInfo,
+    ]
 
     public init() {}
 
@@ -57,6 +71,7 @@ public struct BluetoothTransportStateMachine: Sendable {
             centralAvailability = availability
             guard availability == .poweredOn else {
                 let actions = cancellationActions()
+                enabledNotifications.removeAll()
                 state = .unavailable(availability)
                 return actions
             }
@@ -83,16 +98,33 @@ public struct BluetoothTransportStateMachine: Sendable {
             guard case let .discoveringCharacteristics(id) = state,
                   characteristics == Set(BluetoothCharacteristic.allCases)
             else { return [] }
-            state = .ready(id: id)
+            enabledNotifications.removeAll()
+            state = .subscribingNotifications(id: id)
             return [
                 .subscribe(.controlToHost),
                 .subscribe(.audioToHost),
                 .resetSubscription(.deviceInfo),
-                .connectionReady,
             ]
+
+        case let .notificationStateUpdated(characteristic, isNotifying, succeeded):
+            guard case let .subscribingNotifications(id) = state,
+                  Self.requiredNotifications.contains(characteristic)
+            else { return [] }
+            guard succeeded else {
+                return [.cancelConnection(id: id)]
+            }
+            if isNotifying {
+                enabledNotifications.insert(characteristic)
+            } else {
+                enabledNotifications.remove(characteristic)
+            }
+            guard enabledNotifications == Self.requiredNotifications else { return [] }
+            state = .ready(id: id)
+            return [.connectionReady, .read(.deviceInfo)]
 
         case let .disconnected(id):
             guard activeDeviceID == id else { return [] }
+            enabledNotifications.removeAll()
             if centralAvailability == .poweredOn {
                 state = .scanning
                 return [.startScan]
@@ -104,7 +136,8 @@ public struct BluetoothTransportStateMachine: Sendable {
 
     private var activeDeviceID: String? {
         switch state {
-        case let .connecting(id), let .discoveringService(id), let .discoveringCharacteristics(id), let .ready(id):
+        case let .connecting(id), let .discoveringService(id), let .discoveringCharacteristics(id),
+             let .subscribingNotifications(id), let .ready(id):
             id
         case .disconnected, .unavailable, .scanning:
             nil
