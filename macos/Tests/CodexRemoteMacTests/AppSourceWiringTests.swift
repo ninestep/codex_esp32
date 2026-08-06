@@ -35,7 +35,7 @@ final class AppSourceWiringTests: XCTestCase {
         )
 
         XCTAssertEqual(info["CFBundleIconFile"] as? String, "CodexRemote.icns")
-        XCTAssertNil(info["LSUIElement"])
+        XCTAssertEqual(info["LSUIElement"] as? Bool, true)
         XCTAssertTrue(packageScript.contains("App/CodexRemote.icns"))
         XCTAssertTrue(packageScript.contains("Contents/Resources/CodexRemote.icns"))
         XCTAssertTrue(

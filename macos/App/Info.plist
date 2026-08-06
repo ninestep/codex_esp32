@@ -24,6 +24,8 @@
     <string>1</string>
     <key>LSMinimumSystemVersion</key>
     <string>15.0</string>
+    <key>LSUIElement</key>
+    <true/>
     <key>NSBluetoothAlwaysUsageDescription</key>
     <string>连接 Codex Remote 设备并同步会话状态、控制终端和接收语音。</string>
     <key>NSAppleEventsUsageDescription</key>
