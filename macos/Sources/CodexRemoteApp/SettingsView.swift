@@ -24,16 +24,15 @@ struct SettingsView: View {
             }
 
             Section("豆包语音输入") {
-                HStack {
-                    TextField("快捷键（例如 Fn 或 ⌥Space）", text: $model.settings.doubaoHotkey)
-                        .textFieldStyle(.roundedBorder)
-                    Button("使用 Fn") {
-                        model.settings.selectDoubaoFunctionKey()
-                    }
+                LabeledContent("快捷键") {
+                    HotkeyRecorderField(value: $model.settings.doubaoHotkey)
                 }
+                Text("点击录制框后，直接按住豆包中配置的组合键（建议 ⌘⌥）；全部松开后自动记录。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 if !model.settings.doubaoHotkey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                    HotkeyParser().parse(model.settings.doubaoHotkey) == nil {
-                    Label("快捷键格式无效；请输入独立 Fn，或修饰键加受支持按键。", systemImage: "exclamationmark.triangle.fill")
+                    Label("快捷键格式无效；请重新录制至少两个 Command、Option、Control 修饰键。", systemImage: "exclamationmark.triangle.fill")
                         .font(.caption)
                         .foregroundStyle(.orange)
                 }
@@ -41,9 +40,9 @@ struct SettingsView: View {
                     Text("按住型").tag(HotkeyTriggerMode.hold)
                     Text("切换型").tag(HotkeyTriggerMode.toggle)
                 }
-                .disabled(functionKeySelected)
-                if functionKeySelected {
-                    Text("Fn 必须使用按住型：设备按下时发送 Fn key-down，松开时发送 Fn key-up。")
+                .disabled(holdModeRequired)
+                if holdModeRequired {
+                    Text("纯修饰键组合使用按住型：设备按下时按顺序发送，松开时反向释放。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -83,7 +82,7 @@ struct SettingsView: View {
         .padding(20)
     }
 
-    private var functionKeySelected: Bool {
+    private var holdModeRequired: Bool {
         HotkeyParser().parse(model.settings.doubaoHotkey)?.requiresHoldMode == true
     }
 }

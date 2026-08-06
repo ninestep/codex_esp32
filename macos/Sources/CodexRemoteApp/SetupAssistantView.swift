@@ -102,28 +102,26 @@ struct SetupAssistantView: View {
                 } else if stage == .testing {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
-                            TextField("豆包快捷键，例如 Fn 或 ⌥Space", text: $model.settings.doubaoHotkey)
-                                .textFieldStyle(.roundedBorder)
-                            Button("使用 Fn") {
-                                model.settings.selectDoubaoFunctionKey()
-                            }
+                            Text("豆包快捷键（建议 ⌘⌥）")
+                            HotkeyRecorderField(value: $model.settings.doubaoHotkey)
+                                .frame(minWidth: 180)
                             Picker("触发模式", selection: $model.settings.hotkeyMode) {
                                 Text("按住型").tag(HotkeyTriggerMode.hold)
                                 Text("切换型").tag(HotkeyTriggerMode.toggle)
                             }
                             .frame(width: 150)
-                            .disabled(functionKeySelected)
+                            .disabled(holdModeRequired)
                             Button("保存") { model.saveSettings() }
                                 .disabled(!model.isDoubaoHotkeyInputValid)
                         }
                         if !model.settings.doubaoHotkey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                            HotkeyParser().parse(model.settings.doubaoHotkey) == nil {
-                            Label("快捷键格式无效；请输入独立 Fn，或修饰键加受支持按键。", systemImage: "exclamationmark.triangle.fill")
+                            Label("快捷键格式无效；请重新录制至少两个 Command、Option、Control 修饰键。", systemImage: "exclamationmark.triangle.fill")
                                 .font(.caption)
                                 .foregroundStyle(.orange)
                         }
-                        if functionKeySelected {
-                            Text("Fn 必须使用按住型：设备按下时发送 Fn key-down，松开时发送 Fn key-up。")
+                        if holdModeRequired {
+                            Text("纯修饰键组合使用按住型：设备按下时按顺序发送，松开时反向释放。")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -204,7 +202,7 @@ struct SetupAssistantView: View {
         return Double(ready.count) / Double(required.count)
     }
 
-    private var functionKeySelected: Bool {
+    private var holdModeRequired: Bool {
         HotkeyParser().parse(model.settings.doubaoHotkey)?.requiresHoldMode == true
     }
 

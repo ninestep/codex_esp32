@@ -233,28 +233,35 @@ final class SessionServiceTests: XCTestCase {
         XCTAssertEqual(after, before)
     }
 
-    func testUnboundRegisteredLaunchRejectsSelectAndSendKeyWithoutDeviceOperations() async throws {
+    func testUnboundRegisteredLaunchCanBeSelectedBeforeSessionStart() async throws {
         let controller = RecordingTerminalController()
         let service = SessionService(controller: controller, idGenerator: { "remote-1" })
         _ = try await service.registerFocusedLaunch(launcherInstanceID: "launch-1")
         await controller.resetEvents()
 
-        do {
-            _ = try await service.selectSession(remoteSessionID: "remote-1")
-            XCTFail("Expected providerSessionMissing")
-        } catch {
-            XCTAssertEqual(error as? SessionServiceError, .providerSessionMissing("remote-1"))
-        }
+        let selected = try await service.selectSession(remoteSessionID: "remote-1")
+        let events = await controller.recordedEvents()
 
-        do {
-            try await service.sendKey(.enter, remoteSessionID: "remote-1")
-            XCTFail("Expected providerSessionMissing")
-        } catch {
-            XCTAssertEqual(error as? SessionServiceError, .providerSessionMissing("remote-1"))
-        }
+        XCTAssertEqual(selected.remoteSessionID, "remote-1")
+        XCTAssertNil(selected.providerSessionID)
+        XCTAssertEqual(events, [.focus("term-7")])
+    }
+
+    func testUnboundRegisteredLaunchAllowsTerminalControlsBeforeSessionStart() async throws {
+        let controller = RecordingTerminalController()
+        let service = SessionService(controller: controller, idGenerator: { "remote-1" })
+        _ = try await service.registerFocusedLaunch(launcherInstanceID: "launch-1")
+        await controller.resetEvents()
+
+        try await service.sendKey(.enter, remoteSessionID: "remote-1")
+        try await service.scroll(deltaY: 120, remoteSessionID: "remote-1")
 
         let events = await controller.recordedEvents()
-        XCTAssertEqual(events, [])
+        XCTAssertEqual(events, [
+            .focus("term-7"),
+            .key(.enter, "term-7"),
+            .scroll(120, "term-7"),
+        ])
     }
 
     private func assertSession(

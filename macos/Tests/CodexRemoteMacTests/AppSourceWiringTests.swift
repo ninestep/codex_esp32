@@ -46,4 +46,24 @@ final class AppSourceWiringTests: XCTestCase {
         XCTAssertTrue(source.contains("pendingSubscriptionResets.remove(role) != nil"))
         XCTAssertTrue(source.contains("setNotifyValue(true, for: characteristic)"))
     }
+
+    func testSettingsRecommendModifierOnlyShortcutWithoutFunctionKeyEntry() throws {
+        let macosRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        for relativePath in [
+            "Sources/CodexRemoteApp/SettingsView.swift",
+            "Sources/CodexRemoteApp/SetupAssistantView.swift",
+        ] {
+            let source = try String(
+                contentsOf: macosRoot.appendingPathComponent(relativePath),
+                encoding: .utf8
+            )
+            XCTAssertTrue(source.contains("⌘⌥"), relativePath)
+            XCTAssertTrue(source.contains("HotkeyRecorderField"), relativePath)
+            XCTAssertFalse(source.contains("使用 Fn"), relativePath)
+            XCTAssertFalse(source.contains("独立 Fn"), relativePath)
+        }
+    }
 }

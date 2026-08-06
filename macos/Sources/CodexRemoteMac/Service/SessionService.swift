@@ -93,13 +93,13 @@ public actor SessionService {
     @discardableResult
     public func selectSession(remoteSessionID: String) async throws -> RemoteSession {
         let session = try await registry.session(remoteSessionID: remoteSessionID)
-        let providerSessionID = try requireProviderSession(session)
 
         try await controller.focus(terminalTargetID: session.terminalTargetID)
         guard session.state == .completeUnread else {
             return session
         }
 
+        let providerSessionID = try requireProviderSession(session)
         let result = reducer.reduce(.detailViewed, from: session.state)
         return try await registry.apply(
             result,
@@ -110,7 +110,6 @@ public actor SessionService {
 
     public func sendKey(_ key: TerminalKey, remoteSessionID: String) async throws {
         let session = try await registry.session(remoteSessionID: remoteSessionID)
-        _ = try requireProviderSession(session)
 
         try await controller.focus(terminalTargetID: session.terminalTargetID)
         try await controller.sendKey(key, to: session.terminalTargetID)
@@ -118,7 +117,6 @@ public actor SessionService {
 
     public func scroll(deltaY: Int, remoteSessionID: String) async throws {
         let session = try await registry.session(remoteSessionID: remoteSessionID)
-        _ = try requireProviderSession(session)
 
         try await controller.scroll(deltaY: deltaY, terminalTargetID: session.terminalTargetID)
     }

@@ -64,11 +64,6 @@ public struct AppSettings: Codable, Equatable, Sendable {
         }
     }
 
-    public mutating func selectDoubaoFunctionKey() {
-        doubaoHotkey = "Fn"
-        hotkeyMode = .hold
-    }
-
     public var wasCurrentHotkeyTested: Bool {
         guard let tested = lastTestedDoubaoHotkey,
               let current = HotkeyParser().parse(doubaoHotkey)?.displayValue

@@ -103,10 +103,10 @@ final class BlackHoleAudioInputBridgeTests: XCTestCase {
         ])
     }
 
-    func testFunctionKeyHoldUsesSecondaryFnOnlyWhilePressed() async throws {
+    func testModifierOnlyCombinationUsesHoldMode() async throws {
         let emitter = RecordingBlackHoleHotkeyEmitter(isAuthorized: true)
         let bridge = BlackHoleAudioInputBridge(
-            hotkeyText: "Fn",
+            hotkeyText: "⌘⌥",
             hotkeyMode: .hold,
             blackHoleDeviceID: 11,
             originalInputDeviceID: 22,
@@ -116,9 +116,42 @@ final class BlackHoleAudioInputBridgeTests: XCTestCase {
         try bridge.begin(firstAudioSequence: 1)
         try await bridge.end(lastAudioSequence: 1)
 
+        let leftCommand = CGEventFlags(rawValue: 0x00000008)
+        let leftOption = CGEventFlags(rawValue: 0x00000020)
         XCTAssertEqual(emitter.events, [
-            .down(0x3F, .maskSecondaryFn),
-            .up(0x3F, []),
+            .down(55, [.maskCommand, leftCommand]),
+            .down(58, [.maskCommand, .maskAlternate, leftCommand, leftOption]),
+            .up(58, [.maskCommand, leftCommand]),
+            .up(55, []),
+        ])
+    }
+
+    func testModifierOnlyCombinationCanCompleteTwoConsecutiveTransactions() async throws {
+        let emitter = RecordingBlackHoleHotkeyEmitter(isAuthorized: true)
+        let bridge = BlackHoleAudioInputBridge(
+            hotkeyText: "⌘⌥",
+            hotkeyMode: .hold,
+            blackHoleDeviceID: 11,
+            originalInputDeviceID: 22,
+            emitter: emitter
+        )
+
+        try bridge.begin(firstAudioSequence: 1)
+        try await bridge.end(lastAudioSequence: 10)
+        try bridge.begin(firstAudioSequence: 11)
+        try await bridge.end(lastAudioSequence: 20)
+
+        let leftCommand = CGEventFlags(rawValue: 0x00000008)
+        let leftOption = CGEventFlags(rawValue: 0x00000020)
+        XCTAssertEqual(emitter.events, [
+            .down(55, [.maskCommand, leftCommand]),
+            .down(58, [.maskCommand, .maskAlternate, leftCommand, leftOption]),
+            .up(58, [.maskCommand, leftCommand]),
+            .up(55, []),
+            .down(55, [.maskCommand, leftCommand]),
+            .down(58, [.maskCommand, .maskAlternate, leftCommand, leftOption]),
+            .up(58, [.maskCommand, leftCommand]),
+            .up(55, []),
         ])
     }
 
@@ -156,11 +189,11 @@ private final class RecordingBlackHoleHotkeyEmitter: HotkeyEmitting {
     }
 
     func keyDown(_ hotkey: ParsedHotkey) {
-        events.append(.down(hotkey.keyCode, hotkey.keyDownFlags))
+        events.append(contentsOf: hotkey.keyDownEvents.map { .down($0.keyCode, $0.flags) })
     }
 
     func keyUp(_ hotkey: ParsedHotkey) throws {
-        events.append(.up(hotkey.keyCode, hotkey.keyUpFlags))
+        events.append(contentsOf: hotkey.keyUpEvents.map { .up($0.keyCode, $0.flags) })
         if remainingSuccessfulUpsBeforeFailure > 0 {
             remainingSuccessfulUpsBeforeFailure -= 1
             return
@@ -172,6 +205,6 @@ private final class RecordingBlackHoleHotkeyEmitter: HotkeyEmitting {
     }
 
     func recoverAfterKeyUpFailure(_ hotkey: ParsedHotkey) {
-        events.append(.recovery(hotkey.keyCode))
+        events.append(contentsOf: hotkey.keyUpEvents.map { .recovery($0.keyCode) })
     }
 }

@@ -16,17 +16,108 @@ final class HotkeyTesterTests: XCTestCase {
         XCTAssertEqual(try parser.parseRequired("control arrowleft").displayValue, "⌃←")
     }
 
-    func testParserNormalizesStandaloneFunctionKeyWithDistinctDownAndUpFlags() throws {
+    func testParserNormalizesModifierOnlyCombinationAsHoldShortcut() throws {
         let parser = HotkeyParser()
+        let leftCommand = CGEventFlags(rawValue: 0x00000008)
+        let leftOption = CGEventFlags(rawValue: 0x00000020)
 
-        for value in ["Fn", "fn", "FN"] {
+        for value in ["⌘⌥", "option command", "cmd opt"] {
             let hotkey = try parser.parseRequired(value)
-            XCTAssertEqual(hotkey.displayValue, "Fn")
-            XCTAssertEqual(hotkey.keyCode, 0x3F)
-            XCTAssertEqual(hotkey.keyDownFlags, .maskSecondaryFn)
+            XCTAssertEqual(hotkey.displayValue, "⌘⌥")
+            XCTAssertEqual(
+                hotkey.keyDownFlags,
+                [.maskCommand, .maskAlternate, leftCommand, leftOption]
+            )
             XCTAssertEqual(hotkey.keyUpFlags, [])
+            XCTAssertEqual(hotkey.keyDownEventType, .flagsChanged)
+            XCTAssertEqual(hotkey.keyUpEventType, .flagsChanged)
             XCTAssertTrue(hotkey.requiresHoldMode)
         }
+
+        let threeModifiers = try parser.parseRequired("control option command")
+        XCTAssertEqual(threeModifiers.displayValue, "⌘⌥⌃")
+        XCTAssertEqual(threeModifiers.keyDownEvents.map(\.keyCode), [55, 58, 59])
+        XCTAssertEqual(threeModifiers.keyUpEvents.map(\.keyCode), [59, 58, 55])
+    }
+
+    func testParserUsesKeyboardEventsForNonModifierHotkeys() throws {
+        let hotkey = try HotkeyParser().parseRequired("⌥Space")
+
+        XCTAssertEqual(hotkey.keyDownEventType, .keyDown)
+        XCTAssertEqual(hotkey.keyUpEventType, .keyUp)
+    }
+
+    @MainActor
+    func testEmitterPostsModifierCombinationInPressAndReverseReleaseOrder() throws {
+        var events: [SyntheticHotkeyEvent] = []
+        let emitter = CGEventHotkeyEmitter(
+            authorizationReader: { true },
+            eventPoster: { events.append($0) }
+        )
+        let hotkey = try HotkeyParser().parseRequired("⌘⌥")
+
+        try emitter.keyDown(hotkey)
+        try emitter.keyUp(hotkey)
+
+        let leftCommand = CGEventFlags(rawValue: 0x00000008)
+        let leftOption = CGEventFlags(rawValue: 0x00000020)
+        XCTAssertEqual(events, [
+            SyntheticHotkeyEvent(
+                keyCode: 55,
+                keyDown: true,
+                type: .flagsChanged,
+                flags: [.maskCommand, leftCommand]
+            ),
+            SyntheticHotkeyEvent(
+                keyCode: 58,
+                keyDown: true,
+                type: .flagsChanged,
+                flags: [.maskCommand, .maskAlternate, leftCommand, leftOption]
+            ),
+            SyntheticHotkeyEvent(
+                keyCode: 58,
+                keyDown: false,
+                type: .flagsChanged,
+                flags: [.maskCommand, leftCommand]
+            ),
+            SyntheticHotkeyEvent(keyCode: 55, keyDown: false, type: .flagsChanged, flags: []),
+        ])
+    }
+
+    @MainActor
+    func testEmitterReleasesPressedModifiersWhenLaterPressFails() throws {
+        var events: [SyntheticHotkeyEvent] = []
+        let emitter = CGEventHotkeyEmitter(
+            authorizationReader: { true },
+            eventPoster: { event in
+                events.append(event)
+                if event.keyCode == 58, event.keyDown {
+                    throw AudioInputBridgeError.audioSystemFailure
+                }
+            }
+        )
+        let hotkey = try HotkeyParser().parseRequired("⌘⌥")
+
+        XCTAssertThrowsError(try emitter.keyDown(hotkey)) { error in
+            XCTAssertEqual(error as? AudioInputBridgeError, .audioSystemFailure)
+        }
+        let leftCommand = CGEventFlags(rawValue: 0x00000008)
+        let leftOption = CGEventFlags(rawValue: 0x00000020)
+        XCTAssertEqual(events, [
+            SyntheticHotkeyEvent(
+                keyCode: 55,
+                keyDown: true,
+                type: .flagsChanged,
+                flags: [.maskCommand, leftCommand]
+            ),
+            SyntheticHotkeyEvent(
+                keyCode: 58,
+                keyDown: true,
+                type: .flagsChanged,
+                flags: [.maskCommand, .maskAlternate, leftCommand, leftOption]
+            ),
+            SyntheticHotkeyEvent(keyCode: 55, keyDown: false, type: .flagsChanged, flags: []),
+        ])
     }
 
     func testParserRejectsInvalidOrAmbiguousHotkeys() throws {
@@ -35,8 +126,14 @@ final class HotkeyTesterTests: XCTestCase {
         XCTAssertThrowsError(try parser.parseRequired("Space")) { error in
             XCTAssertEqual(error as? HotkeyParseError, .missingModifier)
         }
+        XCTAssertThrowsError(try parser.parseRequired("⌘")) { error in
+            XCTAssertEqual(error as? HotkeyParseError, .missingKey)
+        }
         XCTAssertThrowsError(try parser.parseRequired("⌘⇧")) { error in
             XCTAssertEqual(error as? HotkeyParseError, .missingKey)
+        }
+        XCTAssertThrowsError(try parser.parseRequired("Fn")) { error in
+            XCTAssertEqual(error as? HotkeyParseError, .functionKeyUnsupported)
         }
         XCTAssertThrowsError(try parser.parseRequired("⌘ F13")) { error in
             XCTAssertEqual(error as? HotkeyParseError, .unknownToken("F13"))
@@ -47,11 +144,9 @@ final class HotkeyTesterTests: XCTestCase {
         XCTAssertThrowsError(try parser.parseRequired("⌘ ⌘ A")) { error in
             XCTAssertEqual(error as? HotkeyParseError, .duplicateModifier("⌘"))
         }
-        for value in ["⌘Fn", "Fn+A"] {
-            XCTAssertThrowsError(try parser.parseRequired(value)) { error in
-                XCTAssertEqual(error as? HotkeyParseError, .functionKeyMustBeStandalone)
-            }
-        }
+        XCTAssertNil(parser.parse("Fn"))
+        XCTAssertNil(parser.parse("⌘Fn"))
+        XCTAssertNil(parser.parse("Fn+A"))
         XCTAssertNil(parser.parse("⌘ A B"))
     }
 
@@ -73,16 +168,21 @@ final class HotkeyTesterTests: XCTestCase {
     }
 
     @MainActor
-    func testTesterHoldsFunctionKeyForOneSecondBeforeRelease() async throws {
+    func testTesterHoldsModifierOnlyCombinationForOneSecondBeforeRelease() async throws {
         let clock = ImmediateHotkeyTestClock()
         let emitter = RecordingHotkeyEmitter(isAuthorized: true)
 
-        let result = try await HotkeyTester(emitter: emitter, clock: clock).test("Fn")
+        let result = try await HotkeyTester(emitter: emitter, clock: clock).test("⌘⌥")
 
         XCTAssertEqual(clock.requestedSeconds, [1, 1, 1, 1])
-        XCTAssertEqual(emitter.events, [.down(keyCode: 0x3F), .up(keyCode: 0x3F)])
-        XCTAssertEqual(result, .eventSent(displayValue: "Fn"))
-        XCTAssertEqual(result.message, "Fn 按住事件已发送")
+        XCTAssertEqual(emitter.events, [
+            .down(keyCode: 55),
+            .down(keyCode: 58),
+            .up(keyCode: 58),
+            .up(keyCode: 55),
+        ])
+        XCTAssertEqual(result, .eventSent(displayValue: "⌘⌥"))
+        XCTAssertEqual(result.message, "按键事件已发送")
     }
 
     @MainActor
@@ -174,12 +274,12 @@ private final class RecordingHotkeyEmitter: HotkeyEmitting {
     }
 
     func keyDown(_ hotkey: ParsedHotkey) throws {
-        events.append(.down(keyCode: hotkey.keyCode))
+        events.append(contentsOf: hotkey.keyDownEvents.map { .down(keyCode: $0.keyCode) })
         if failOnDown { throw AudioInputBridgeError.audioSystemFailure }
     }
 
     func keyUp(_ hotkey: ParsedHotkey) throws {
-        events.append(.up(keyCode: hotkey.keyCode))
+        events.append(contentsOf: hotkey.keyUpEvents.map { .up(keyCode: $0.keyCode) })
         if remainingFailedUps > 0 {
             remainingFailedUps -= 1
             throw AudioInputBridgeError.audioSystemFailure
@@ -187,7 +287,7 @@ private final class RecordingHotkeyEmitter: HotkeyEmitting {
     }
 
     func recoverAfterKeyUpFailure(_ hotkey: ParsedHotkey) {
-        events.append(.recovery(keyCode: hotkey.keyCode))
+        events.append(contentsOf: hotkey.keyUpEvents.map { .recovery(keyCode: $0.keyCode) })
     }
 }
 
