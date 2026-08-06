@@ -20,6 +20,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set up Swift 6.2
+        uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: '6.2'
+
       - name: Run Swift tests
         run: swift test --package-path macos --parallel --disable-sandbox
 
@@ -36,6 +41,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Set up Swift 6.2
+        uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: '6.2'
 
       - name: Build ad-hoc signed app
         env:
