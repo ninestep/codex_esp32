@@ -22,6 +22,7 @@ public enum AudioDependencyStatus: Equatable, Sendable {
 public struct AppSettings: Codable, Equatable, Sendable {
     public var socketPath: String
     public var automaticBLEReconnect: Bool
+    public var codexCLIPath: String
     public var doubaoHotkey: String
     public var hotkeyMode: HotkeyTriggerMode
     public var lastTestedDoubaoHotkey: String?
@@ -29,12 +30,14 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public init(
         socketPath: String,
         automaticBLEReconnect: Bool,
+        codexCLIPath: String = "",
         doubaoHotkey: String,
         hotkeyMode: HotkeyTriggerMode,
         lastTestedDoubaoHotkey: String? = nil
     ) {
         self.socketPath = socketPath
         self.automaticBLEReconnect = automaticBLEReconnect
+        self.codexCLIPath = codexCLIPath
         self.doubaoHotkey = doubaoHotkey
         self.hotkeyMode = hotkeyMode
         self.lastTestedDoubaoHotkey = lastTestedDoubaoHotkey
@@ -54,6 +57,15 @@ public struct AppSettings: Codable, Equatable, Sendable {
 
     public func canUsePTT(hasSelectedSession: Bool, blackHoleAvailable: Bool) -> Bool {
         hasSelectedSession && blackHoleAvailable && !doubaoHotkey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    public var isCodexCLIPathValid: Bool {
+        let path = normalizedCodexCLIPath()
+        return path.isEmpty || path.hasPrefix("/")
+    }
+
+    public mutating func normalizeCodexCLIPath() {
+        codexCLIPath = normalizedCodexCLIPath()
     }
 
     public mutating func normalizeDoubaoHotkey() throws {
@@ -87,9 +99,16 @@ public struct AppSettings: Codable, Equatable, Sendable {
         return try HotkeyParser().parseRequired(trimmed)
     }
 
+    private func normalizedCodexCLIPath() -> String {
+        let trimmed = codexCLIPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        return (trimmed as NSString).expandingTildeInPath
+    }
+
     private enum CodingKeys: String, CodingKey {
         case socketPath
         case automaticBLEReconnect
+        case codexCLIPath
         case doubaoHotkey
         case hotkeyMode
         case lastTestedDoubaoHotkey
@@ -101,6 +120,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
             ?? "/tmp/codex-remote/events.sock"
         automaticBLEReconnect = try container.decodeIfPresent(Bool.self, forKey: .automaticBLEReconnect)
             ?? true
+        codexCLIPath = try container.decodeIfPresent(String.self, forKey: .codexCLIPath) ?? ""
         let decodedHotkey = try container.decodeIfPresent(String.self, forKey: .doubaoHotkey) ?? ""
         if let parsed = HotkeyParser().parse(decodedHotkey) {
             doubaoHotkey = parsed.displayValue
@@ -124,6 +144,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(socketPath, forKey: .socketPath)
         try container.encode(automaticBLEReconnect, forKey: .automaticBLEReconnect)
+        try container.encode(codexCLIPath, forKey: .codexCLIPath)
         let normalizedHotkey = try normalizedDoubaoHotkey()
         try container.encode(normalizedHotkey, forKey: .doubaoHotkey)
         let encodedMode: HotkeyTriggerMode = HotkeyParser().parse(normalizedHotkey)?.requiresHoldMode == true

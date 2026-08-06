@@ -3,17 +3,31 @@ import Foundation
 public struct CommandRequest: Equatable, Sendable {
     public let executableURL: URL
     public let arguments: [String]
+    public let environment: [String: String]?
 
-    public init(executablePath: String, arguments: [String] = []) throws {
+    public init(
+        executablePath: String,
+        arguments: [String] = [],
+        environment: [String: String]? = nil
+    ) throws {
         guard executablePath.hasPrefix("/") else {
             throw CommandRunnerError.relativeExecutablePath
         }
-        try self.init(executableURL: URL(fileURLWithPath: executablePath), arguments: arguments)
+        try self.init(
+            executableURL: URL(fileURLWithPath: executablePath),
+            arguments: arguments,
+            environment: environment
+        )
     }
 
-    public init(executableURL: URL, arguments: [String] = []) throws {
+    public init(
+        executableURL: URL,
+        arguments: [String] = [],
+        environment: [String: String]? = nil
+    ) throws {
         self.executableURL = try Self.validatedExecutableURL(executableURL)
         self.arguments = arguments
+        self.environment = environment
     }
 
     fileprivate static func validatedExecutableURL(_ executableURL: URL) throws -> URL {
@@ -171,6 +185,7 @@ public struct ProcessCommandRunner: CommandRunning {
             let process = Process()
             process.executableURL = request.executableURL
             process.arguments = request.arguments
+            process.environment = request.environment
             let processBox = RunningProcess(process)
 
             let stdoutPipe = Pipe()
@@ -236,6 +251,7 @@ public struct ProcessCommandRunner: CommandRunning {
         let process = Process()
         process.executableURL = request.executableURL
         process.arguments = request.arguments
+        process.environment = request.environment
 
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()

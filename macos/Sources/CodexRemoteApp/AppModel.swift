@@ -120,6 +120,10 @@ final class AppModel: ObservableObject {
         return value.isEmpty || HotkeyParser().parse(value) != nil
     }
 
+    var isCodexCLIPathInputValid: Bool {
+        settings.isCodexCLIPathValid
+    }
+
     func start() async {
         guard runtime == nil, !isStarting else { return }
         isStarting = true
@@ -171,6 +175,11 @@ final class AppModel: ObservableObject {
 
     func saveSettings() {
         var settingsToSave = settings
+        guard settingsToSave.isCodexCLIPathValid else {
+            settingsSaveMessage = "Codex CLI 路径必须是绝对路径，设置未保存"
+            return
+        }
+        settingsToSave.normalizeCodexCLIPath()
         guard (try? settingsToSave.normalizeDoubaoHotkey()) != nil,
               let data = try? JSONEncoder().encode(settingsToSave)
         else {
@@ -190,7 +199,10 @@ final class AppModel: ObservableObject {
                 settings: settingsToSave,
                 esp32ConnectedReader: esp32ConnectedReader
             )
-            settingsSaveMessage = "设置已保存"
+            settingsSaveMessage = "设置已保存，正在复查"
+            Task { [weak self] in
+                await self?.refreshSetup()
+            }
         } else {
             pendingSetupSettings = settingsToSave
             settingsSaveMessage = "设置已保存，将在当前配置结束后复查"
@@ -433,6 +445,7 @@ final class AppModel: ObservableObject {
         let sourceApplicationURL = Bundle.main.bundleURL
         let testedHotkey = settings.lastTestedDoubaoHotkey
         let environment = MacSetupEnvironment(
+            customCodexCLIPath: settings.codexCLIPath,
             esp32ConnectedReader: esp32ConnectedReader,
             hotkeyTestReader: { hotkey in
                 HotkeyParser().parse(hotkey)?.displayValue == testedHotkey

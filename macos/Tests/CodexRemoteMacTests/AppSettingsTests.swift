@@ -8,6 +8,7 @@ final class AppSettingsTests: XCTestCase {
 
         XCTAssertEqual(settings.socketPath, "/private/tmp/codex-remote-501/events.sock")
         XCTAssertTrue(settings.automaticBLEReconnect)
+        XCTAssertEqual(settings.codexCLIPath, "")
         XCTAssertEqual(settings.doubaoHotkey, "")
         XCTAssertEqual(settings.hotkeyMode, .hold)
         XCTAssertNil(settings.lastTestedDoubaoHotkey)
@@ -44,6 +45,7 @@ final class AppSettingsTests: XCTestCase {
 
         XCTAssertEqual(settings.socketPath, "/tmp/codex-remote/events.sock")
         XCTAssertTrue(settings.automaticBLEReconnect)
+        XCTAssertEqual(settings.codexCLIPath, "")
         XCTAssertEqual(settings.doubaoHotkey, "")
         XCTAssertEqual(settings.hotkeyMode, .hold)
         XCTAssertNil(settings.lastTestedDoubaoHotkey)
@@ -62,6 +64,27 @@ final class AppSettingsTests: XCTestCase {
 
         XCTAssertEqual(decoded.doubaoHotkey, "⌘⇧V")
         XCTAssertEqual(decoded.hotkeyMode, .toggle)
+    }
+
+    func testCodexCLIPathPersistsAndExpandsHomeDirectory() throws {
+        var settings = AppSettings.defaults(temporaryDirectory: "/tmp", userID: 501)
+        settings.codexCLIPath = "  ~/.local/bin/codex  "
+
+        XCTAssertTrue(settings.isCodexCLIPathValid)
+        settings.normalizeCodexCLIPath()
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(settings))
+
+        XCTAssertEqual(
+            decoded.codexCLIPath,
+            FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin/codex").path
+        )
+    }
+
+    func testCodexCLIPathRejectsRelativePath() {
+        var settings = AppSettings.defaults(temporaryDirectory: "/tmp", userID: 501)
+        settings.codexCLIPath = "bin/codex"
+
+        XCTAssertFalse(settings.isCodexCLIPathValid)
     }
 
     func testModifierOnlyCombinationNormalizesAndForcesHoldMode() throws {

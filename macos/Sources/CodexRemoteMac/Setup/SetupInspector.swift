@@ -389,6 +389,7 @@ public struct MacSetupEnvironment: SetupEnvironmentReading {
     private let fileManager: SendableFileManager
     private let commandRunner: any CommandRunning
     private let audioCatalog: CoreAudioDeviceCatalog
+    private let customCodexCLIPath: String
     private let esp32ConnectedReader: @Sendable () async -> Bool
     private let hotkeyTestReader: @Sendable (String) async -> Bool
 
@@ -396,12 +397,14 @@ public struct MacSetupEnvironment: SetupEnvironmentReading {
         fileManager: FileManager = .default,
         commandRunner: any CommandRunning = ProcessCommandRunner(),
         audioCatalog: CoreAudioDeviceCatalog = CoreAudioDeviceCatalog(),
+        customCodexCLIPath: String = "",
         esp32ConnectedReader: @escaping @Sendable () async -> Bool = { false },
         hotkeyTestReader: @escaping @Sendable (String) async -> Bool = { _ in false }
     ) {
         self.fileManager = SendableFileManager(fileManager)
         self.commandRunner = commandRunner
         self.audioCatalog = audioCatalog
+        self.customCodexCLIPath = customCodexCLIPath.trimmingCharacters(in: .whitespacesAndNewlines)
         self.esp32ConnectedReader = esp32ConnectedReader
         self.hotkeyTestReader = hotkeyTestReader
     }
@@ -443,7 +446,15 @@ public struct MacSetupEnvironment: SetupEnvironmentReading {
     }
 
     public func codexExecutable() async -> URL? {
+        if !customCodexCLIPath.isEmpty {
+            let expandedPath = (customCodexCLIPath as NSString).expandingTildeInPath
+            guard expandedPath.hasPrefix("/") else { return nil }
+            let customURL = URL(fileURLWithPath: expandedPath)
+            return isExecutableFile(customURL) ? customURL : nil
+        }
+
         let home = FileManager.default.homeDirectoryForCurrentUser
+        let shellPath = await resolvedShellPath()
         return await firstExecutable(named: "codex", extraCandidates: [
             URL(fileURLWithPath: "/opt/homebrew/bin/codex"),
             URL(fileURLWithPath: "/usr/local/bin/codex"),
@@ -452,11 +463,15 @@ public struct MacSetupEnvironment: SetupEnvironmentReading {
             home.appendingPathComponent(".bun/bin/codex"),
             home.appendingPathComponent(".volta/bin/codex"),
             home.appendingPathComponent(".asdf/shims/codex"),
-        ])
+        ], additionalPath: shellPath)
     }
 
     public func codexVersion(executableURL: URL) async -> SetupExecutableVersion {
-        await readVersion(executableURL: executableURL, arguments: ["--version"])
+        await readVersion(
+            executableURL: executableURL,
+            arguments: ["--version"],
+            environment: await shellEnvironment()
+        )
     }
 
     public func isShimInstalled(at url: URL, targetURL: URL) async -> Bool {
@@ -556,12 +571,20 @@ public struct MacSetupEnvironment: SetupEnvironmentReading {
         await esp32ConnectedReader()
     }
 
-    private func firstExecutable(named name: String, extraCandidates: [URL]) async -> URL? {
+    private func firstExecutable(
+        named name: String,
+        extraCandidates: [URL],
+        additionalPath: String? = nil
+    ) async -> URL? {
         for candidate in extraCandidates where isExecutableFile(candidate) {
             return candidate
         }
 
-        let pathValue = ProcessInfo.processInfo.environment["PATH"] ?? ""
+        let currentPath = ProcessInfo.processInfo.environment["PATH"] ?? ""
+        let pathValue = [currentPath, additionalPath]
+            .compactMap { $0 }
+            .filter { !$0.isEmpty }
+            .joined(separator: ":")
         for directory in pathValue.split(separator: ":") {
             let url = URL(fileURLWithPath: String(directory)).appendingPathComponent(name)
             if isExecutableFile(url) {
@@ -571,12 +594,20 @@ public struct MacSetupEnvironment: SetupEnvironmentReading {
         return nil
     }
 
-    private func readVersion(executableURL: URL, arguments: [String]) async -> SetupExecutableVersion {
+    private func readVersion(
+        executableURL: URL,
+        arguments: [String],
+        environment: [String: String]? = nil
+    ) async -> SetupExecutableVersion {
         guard isExecutableFile(executableURL) else {
             return .notInstalled
         }
         do {
-            let request = try CommandRequest(executableURL: executableURL, arguments: arguments)
+            let request = try CommandRequest(
+                executableURL: executableURL,
+                arguments: arguments,
+                environment: environment
+            )
             let result = try await commandRunner.run(request)
             let output = [result.stdout, result.stderr]
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -592,6 +623,36 @@ public struct MacSetupEnvironment: SetupEnvironmentReading {
 
     private func isExecutableFile(_ url: URL) -> Bool {
         fileManager.isExecutableFile(atPath: url.path)
+    }
+
+    private func shellEnvironment() async -> [String: String] {
+        var environment = ProcessInfo.processInfo.environment
+        if let shellPath = await resolvedShellPath() {
+            environment["PATH"] = shellPath
+        }
+        return environment
+    }
+
+    private func resolvedShellPath() async -> String? {
+        let shellURL = URL(fileURLWithPath: "/bin/zsh")
+        let marker = "__CODEX_REMOTE_PATH__"
+        guard isExecutableFile(shellURL),
+              let request = try? CommandRequest(
+                  executableURL: shellURL,
+                  arguments: ["-ilc", "printf '\\n\(marker)%s\\n' \"$PATH\""]
+              ),
+              let result = try? await commandRunner.run(request),
+              result.exitCode == 0
+        else {
+            return nil
+        }
+
+        return result.stdout
+            .split(whereSeparator: \.isNewline)
+            .reversed()
+            .first { $0.hasPrefix(marker) }
+            .map { String($0.dropFirst(marker.count)) }
+            .flatMap { $0.isEmpty ? nil : $0 }
     }
 
 }

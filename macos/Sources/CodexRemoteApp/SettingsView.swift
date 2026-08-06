@@ -1,4 +1,5 @@
 import CodexRemoteMac
+import AppKit
 import SwiftUI
 
 struct SettingsView: View {
@@ -22,6 +23,29 @@ struct SettingsView: View {
                 TextField("本地 Socket", text: $model.settings.socketPath)
                     .textFieldStyle(.roundedBorder)
                 Toggle("自动重新连接 BLE 设备", isOn: $model.settings.automaticBLEReconnect)
+            }
+
+            Section("Codex CLI") {
+                LabeledContent("可执行文件") {
+                    HStack(spacing: 8) {
+                        TextField("/path/to/codex", text: $model.settings.codexCLIPath)
+                            .textFieldStyle(.roundedBorder)
+                        Button {
+                            chooseCodexCLI()
+                        } label: {
+                            Image(systemName: "folder")
+                        }
+                        .help("选择 Codex CLI 可执行文件")
+                    }
+                }
+                Text("留空时自动探测 Codex CLI；填写后只使用指定路径。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if !model.isCodexCLIPathInputValid {
+                    Label("请输入绝对路径，或清空后使用自动探测。", systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
             }
 
             Section("豆包语音输入") {
@@ -63,7 +87,7 @@ struct SettingsView: View {
                 }
                 Button("授权辅助功能…") { model.requestAccessibilityPermission() }
                     .disabled(model.isSetupBusy)
-                Text("快捷键保存后立即生效；Socket 设置将在下次启动时生效。")
+                Text("Codex CLI 路径和快捷键保存后立即生效；Socket 设置将在下次启动时生效。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 if let message = model.settingsSaveMessage {
@@ -92,7 +116,7 @@ struct SettingsView: View {
                 Spacer()
                 Button("保存") { model.saveSettings() }
                     .buttonStyle(.borderedProminent)
-                    .disabled(!model.isDoubaoHotkeyInputValid)
+                    .disabled(!model.isDoubaoHotkeyInputValid || !model.isCodexCLIPathInputValid)
             }
         }
         .padding(20)
@@ -110,5 +134,16 @@ struct SettingsView: View {
 
     private var holdModeRequired: Bool {
         HotkeyParser().parse(model.settings.doubaoHotkey)?.requiresHoldMode == true
+    }
+
+    private func chooseCodexCLI() {
+        let panel = NSOpenPanel()
+        panel.title = "选择 Codex CLI"
+        panel.prompt = "选择"
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        model.settings.codexCLIPath = url.path
     }
 }

@@ -66,6 +66,26 @@ final class SetupInspectorTests: XCTestCase {
         XCTAssertFalse(disconnectedValue)
     }
 
+    func testMacSetupEnvironmentUsesCustomCodexCLIPath() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executableURL = root.appendingPathComponent("custom-codex")
+        try write("#!/bin/sh\n", to: executableURL)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executableURL.path)
+        let environment = MacSetupEnvironment(customCodexCLIPath: executableURL.path)
+
+        let detectedURL = await environment.codexExecutable()
+
+        XCTAssertEqual(detectedURL?.standardizedFileURL, executableURL.standardizedFileURL)
+    }
+
+    func testMacSetupEnvironmentDoesNotFallBackWhenCustomCodexCLIPathIsInvalid() async {
+        let environment = MacSetupEnvironment(customCodexCLIPath: "/missing/custom-codex")
+        let detectedURL = await environment.codexExecutable()
+
+        XCTAssertNil(detectedURL)
+    }
+
     func testAppModelWiresLiveBluetoothStateIntoSetupInspection() throws {
         let macosRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -294,6 +314,25 @@ final class SetupInspectorTests: XCTestCase {
 
     func testCommandRequestRejectsRelativeExecutablePath() {
         XCTAssertThrowsError(try CommandRequest(executablePath: "bin/echo", arguments: []))
+    }
+
+    func testCommandRunUsesProvidedEnvironmentPath() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let helperURL = root.appendingPathComponent("codex-helper")
+        try write("#!/bin/sh\nprintf 'codex-cli 9.9.9\\n'\n", to: helperURL)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: helperURL.path)
+        let runner = ProcessCommandRunner()
+        let request = try CommandRequest(
+            executableURL: URL(fileURLWithPath: "/usr/bin/env"),
+            arguments: ["codex-helper", "--version"],
+            environment: ["PATH": root.path]
+        )
+
+        let result = try await runner.run(request)
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertEqual(result.stdout, "codex-cli 9.9.9\n")
     }
 
     func testCommandRunPreservesNonZeroExitCodeAndRedactsOutput() async throws {
