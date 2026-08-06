@@ -89,8 +89,7 @@ final class AppSourceWiringTests: XCTestCase {
 
         XCTAssertTrue(source.contains("MenuBarStatusLabel(model: appDelegate.model)"))
         XCTAssertTrue(source.contains("@ObservedObject var model: AppModel"))
-        XCTAssertTrue(source.contains("Text(\">_\")"))
-        XCTAssertTrue(source.contains("Image(systemName: model.menuBarSymbol)"))
+        XCTAssertTrue(source.contains("Text(model.menuBarStatusToken)"))
         XCTAssertTrue(source.contains("accessibilityLabel"))
     }
 
@@ -102,9 +101,10 @@ final class AppSourceWiringTests: XCTestCase {
         let sourceURL = macosRoot.appendingPathComponent("Sources/CodexRemoteApp/AppModel.swift")
         let source = try String(contentsOf: sourceURL, encoding: .utf8)
 
-        XCTAssertTrue(source.contains("case .ready: \"wifi\""))
-        XCTAssertTrue(source.contains("case .unavailable: \"exclamationmark\""))
-        XCTAssertTrue(source.contains("default: \"wifi.slash\""))
+        XCTAssertTrue(source.contains("case .ready: \">_\""))
+        XCTAssertTrue(source.contains("case .disconnected, .unavailable: \"x_\""))
+        XCTAssertTrue(source.contains(".subscribingNotifications:"))
+        XCTAssertTrue(source.contains("\"o_\""))
     }
 
     func testCoreBluetoothResetsPersistedDeviceInfoSubscription() throws {

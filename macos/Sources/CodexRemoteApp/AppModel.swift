@@ -76,11 +76,13 @@ final class AppModel: ObservableObject {
         hotkeyTester = HotkeyTester()
     }
 
-    var menuBarSymbol: String {
+    var menuBarStatusToken: String {
         switch snapshot.transportState {
-        case .ready: "wifi"
-        case .unavailable: "exclamationmark"
-        default: "wifi.slash"
+        case .ready: ">_"
+        case .disconnected, .unavailable: "x_"
+        case .scanning, .connecting, .discoveringService, .discoveringCharacteristics,
+             .subscribingNotifications:
+            "o_"
         }
     }
 
