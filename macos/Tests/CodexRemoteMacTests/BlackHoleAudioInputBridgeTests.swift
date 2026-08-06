@@ -140,6 +140,33 @@ final class BlackHoleAudioInputBridgeTests: XCTestCase {
         ])
     }
 
+    func testHoldEndReleasesHotkeyBeforeWaitingForPlayback() async throws {
+        var events: [String] = []
+        let emitter = RecordingBlackHoleHotkeyEmitter(isAuthorized: true)
+        let bridge = BlackHoleAudioInputBridge(
+            hotkeyText: "⌥Space",
+            hotkeyMode: .hold,
+            blackHoleDeviceID: 11,
+            originalInputDeviceID: 22,
+            emitter: emitter,
+            playbackCompletionOperation: {
+                events.append(emitter.events.contains { event in
+                    if case .up = event { return true }
+                    return false
+                } ? "released" : "not-released")
+            }
+        )
+
+        try bridge.begin(firstAudioSequence: 1)
+        try await bridge.end(lastAudioSequence: 1)
+
+        XCTAssertEqual(emitter.events, [
+            .down(49, .maskAlternate),
+            .up(49, .maskAlternate),
+        ])
+        XCTAssertEqual(events, ["released"])
+    }
+
     func testModifierOnlyCombinationUsesHoldMode() async throws {
         let emitter = RecordingBlackHoleHotkeyEmitter(isAuthorized: true)
         let bridge = BlackHoleAudioInputBridge(

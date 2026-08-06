@@ -51,7 +51,8 @@ public final class BlackHoleAudioInputBridge: AudioInputHandling {
         originalInputDeviceID: AudioDeviceID?,
         emitter: any HotkeyEmitting,
         setDefaultInputDeviceIDOperation: @escaping (AudioDeviceID) throws -> Void = { _ in },
-        configureEngineOperation: @escaping (AudioDeviceID) throws -> Void = { _ in }
+        configureEngineOperation: @escaping (AudioDeviceID) throws -> Void = { _ in },
+        playbackCompletionOperation: @escaping () async -> Void = {}
     ) {
         self.catalog = CoreAudioDeviceCatalog()
         self.emitter = emitter
@@ -61,7 +62,7 @@ public final class BlackHoleAudioInputBridge: AudioInputHandling {
         self.originalInputDeviceIDProvider = { originalInputDeviceID }
         self.setDefaultInputDeviceIDOperation = setDefaultInputDeviceIDOperation
         self.configureEngineOperation = configureEngineOperation
-        self.playbackCompletionOperation = {}
+        self.playbackCompletionOperation = playbackCompletionOperation
     }
 
     public func begin(firstAudioSequence: UInt32) throws {
@@ -108,14 +109,20 @@ public final class BlackHoleAudioInputBridge: AudioInputHandling {
 
     public func end(lastAudioSequence: UInt32) async throws {
         guard expectedSequence != nil else { throw AudioInputBridgeError.notActive }
-        if let playbackCompletionOperation {
-            await playbackCompletionOperation()
-        } else {
-            await playbackCompletion()
+        do {
+            // 先释放快捷键，确保豆包在播放队列等待时也能立即结束识别。
+            if let hotkey = activeHotkey { try triggerEnd(hotkey) }
+            if let playbackCompletionOperation {
+                await playbackCompletionOperation()
+            } else {
+                await playbackCompletion()
+            }
+            restoreSystemState()
+            _ = lastAudioSequence
+        } catch {
+            restoreSystemState()
+            throw error
         }
-        if let hotkey = activeHotkey { try triggerEnd(hotkey) }
-        restoreSystemState()
-        _ = lastAudioSequence
     }
 
     public func abort() {
