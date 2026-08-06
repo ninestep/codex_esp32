@@ -1,0 +1,134 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run Swift tests
+        run: swift test --package-path macos --parallel --disable-sandbox
+
+      - name: Run firmware host tests
+        run: zsh firmware/test/host/run-tests.zsh all
+
+      - name: Verify BLE golden fixtures
+        run: zsh firmware/test/host/verify-golden-fixtures.zsh
+
+  package-macos:
+    name: Package macOS DMG
+    needs: validate
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build ad-hoc signed app
+        env:
+          CODE_SIGN_IDENTITY: '-'
+        run: zsh macos/Scripts/package-app.zsh release "$RUNNER_TEMP/codex-remote-build"
+
+      - name: Create DMG
+        env:
+          RELEASE_VERSION: ${{ github.ref_name }}
+        run: |
+          app_dir="$RUNNER_TEMP/codex-remote-build/Codex Remote.app"
+          dmg_path="$RUNNER_TEMP/CodexRemote-${RELEASE_VERSION}-macOS.dmg"
+          hdiutil create \
+            -volname "Codex Remote ${RELEASE_VERSION}" \
+            -srcfolder "$app_dir" \
+            -ov \
+            -format UDZO \
+            "$dmg_path"
+          cp "$dmg_path" "$GITHUB_WORKSPACE/"
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg
+          path: CodexRemote-${{ github.ref_name }}-macOS.dmg
+          if-no-files-found: error
+
+  build-firmware:
+    name: Build ESP32-S3 firmware
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build firmware with ESP-IDF
+        uses: espressif/esp-idf-ci-action@v1.2.0
+        with:
+          esp_idf_version: v5.5.1
+          target: esp32s3
+          path: firmware
+          command: idf.py build
+
+      - name: Package firmware images
+        env:
+          RELEASE_VERSION: ${{ github.ref_name }}
+        run: |
+          archive="CodexRemote-${RELEASE_VERSION}-ESP32S3-firmware.tar.gz"
+          tar -C firmware/build -czf "$archive" \
+            bootloader/bootloader.bin \
+            partition_table/partition-table.bin \
+            codex_remote.bin \
+            flasher_args.json \
+            project_description.json
+
+      - name: Upload firmware artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware
+          path: CodexRemote-${{ github.ref_name }}-ESP32S3-firmware.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs:
+      - package-macos
+      - build-firmware
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-dmg
+          path: release-assets
+
+      - name: Download firmware artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: firmware
+          path: release-assets
+
+      - name: Generate checksums
+        working-directory: release-assets
+        run: sha256sum * > SHA256SUMS
+
+      - name: Create or update release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ github.ref_name }}
+        run: |
+          if ! gh release view "$RELEASE_VERSION" >/dev/null 2>&1; then
+            gh release create "$RELEASE_VERSION" \
+              --title "Codex Remote ${RELEASE_VERSION}" \
+              --generate-notes
+          fi
+          gh release upload "$RELEASE_VERSION" release-assets/* --clobber
