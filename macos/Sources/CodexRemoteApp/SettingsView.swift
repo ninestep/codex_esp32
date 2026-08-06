@@ -3,6 +3,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @ObservedObject var model: AppModel
+    @State private var isShowingCleanupConfirmation = false
 
     var body: some View {
         TabView {
@@ -72,6 +73,21 @@ struct SettingsView: View {
                 }
             }
 
+            Section("维护") {
+                Text("移除 Codex Remote 写入的 Shell PATH、命令桥接和 Codex Hooks。不会删除 App、Codex CLI、BlackHole 或 macOS 权限。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button("清理 Codex Remote 配置…", role: .destructive) {
+                    isShowingCleanupConfirmation = true
+                }
+                .disabled(model.isSetupBusy)
+                if let message = model.managedConfigurationCleanupMessage {
+                    Text(message)
+                        .font(.caption)
+                        .foregroundStyle(message.contains("失败") ? .red : .secondary)
+                }
+            }
+
             HStack {
                 Spacer()
                 Button("保存") { model.saveSettings() }
@@ -80,6 +96,16 @@ struct SettingsView: View {
             }
         }
         .padding(20)
+        .alert("清理 Codex Remote 配置？", isPresented: $isShowingCleanupConfirmation) {
+            Button("清理配置", role: .destructive) {
+                Task {
+                    await model.performSetupAction(.restoreManagedConfiguration, for: .localIPC)
+                }
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("将从 ~/.zshrc、~/.codex/hooks.json 和 ~/.codex-remote/bin/codex 中移除仅由 Codex Remote 管理的内容。此操作不会自动重新配置。")
+        }
     }
 
     private var holdModeRequired: Bool {

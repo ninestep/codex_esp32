@@ -228,6 +228,10 @@ public actor SetupCoordinator {
     }
 
     private func canPerform(_ action: SetupAction, for item: SetupItem) -> Bool {
+        if action == .restoreManagedConfiguration, item == .localIPC {
+            return true
+        }
+
         guard let result = snapshot.result(for: item) else {
             return false
         }

@@ -112,6 +112,33 @@ final class SetupCoordinatorTests: XCTestCase {
         XCTAssertEqual(snapshot.result(for: .blackHole)?.state, .needsConfiguration)
     }
 
+    func testRestoreManagedConfigurationCanRunFromReadySnapshotAndOnlyRefreshes() async {
+        let refreshedSnapshot = makeSnapshot(overrides: [
+            .shim: .needsConfiguration,
+            .shellPath: .needsConfiguration,
+            .hooksConfiguration: .needsConfiguration,
+        ])
+        let inspector = SetupInspectorSpy(snapshots: [refreshedSnapshot])
+        let executor = SetupExecutorSpy()
+        let coordinator = SetupCoordinator(
+            inspector: inspector,
+            executor: executor,
+            initialSnapshot: SetupSnapshot(results: makeSnapshot())
+        )
+
+        let outcome = await coordinator.perform(.restoreManagedConfiguration, for: .localIPC)
+
+        let actions = await executor.actions()
+        let snapshot = await coordinator.snapshot
+        XCTAssertEqual(outcome, .completed)
+        XCTAssertEqual(actions, [
+            RecordedSetupAction(item: .localIPC, action: .restoreManagedConfiguration),
+        ])
+        XCTAssertEqual(snapshot.result(for: .shim)?.state, .needsConfiguration)
+        XCTAssertEqual(snapshot.result(for: .shellPath)?.state, .needsConfiguration)
+        XCTAssertEqual(snapshot.result(for: .hooksConfiguration)?.state, .needsConfiguration)
+    }
+
     func testCheckingAndConfiguringStatesDoNotExecuteAutomatically() async {
         for state in [SetupState.checking, .configuring] {
             let inspector = SetupInspectorSpy(snapshots: [

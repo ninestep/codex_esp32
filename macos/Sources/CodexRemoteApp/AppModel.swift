@@ -42,6 +42,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var hotkeyTestState: HotkeyTestViewState = .idle
     @Published private(set) var isSetupBusy = false
     @Published private(set) var settingsSaveMessage: String?
+    @Published private(set) var managedConfigurationCleanupMessage: String?
     @Published private var automaticSetupProgress = AutomaticSetupProgressState()
     @Published var settings: AppSettings
 
@@ -223,6 +224,9 @@ final class AppModel: ObservableObject {
             await testDoubaoHotkey()
             return
         }
+        if action == .restoreManagedConfiguration {
+            managedConfigurationCleanupMessage = nil
+        }
         guard let services = beginSetupOperation() else { return }
         let outcome: SetupOperationOutcome
         switch action {
@@ -247,7 +251,8 @@ final class AppModel: ObservableObject {
              .installBlackHole, .restoreManagedConfiguration:
             let performOutcome = await services.coordinator.perform(action, for: item)
             let performedSnapshot = await services.coordinator.snapshot
-            if case .completed = performOutcome,
+            if action != .restoreManagedConfiguration,
+               case .completed = performOutcome,
                performedSnapshot.result(for: item)?.state != .failed {
                 outcome = await services.coordinator.runAll()
             } else {
@@ -262,6 +267,11 @@ final class AppModel: ObservableObject {
                 : setupActionName(action),
             targetItem: item
         )
+        if action == .restoreManagedConfiguration {
+            managedConfigurationCleanupMessage = setupSnapshot.result(for: .localIPC)?.state == .failed
+                ? "清理失败，请在“安装与诊断”中查看详情"
+                : "清理完成，重新打开终端后生效"
+        }
     }
 
     func testDoubaoHotkey() async {
