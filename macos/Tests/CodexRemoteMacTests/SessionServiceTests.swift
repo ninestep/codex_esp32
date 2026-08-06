@@ -40,6 +40,22 @@ final class SessionServiceTests: XCTestCase {
         )
     }
 
+    func testSendShortcutFocusesCapturedLaunchTerminalBeforeSendingCommand() async throws {
+        let controller = RecordingTerminalController()
+        let service = SessionService(controller: controller, idGenerator: { "remote-1" })
+        _ = try await service.registerFocusedLaunch(launcherInstanceID: "launch-1")
+        await controller.resetEvents()
+
+        _ = try await service.receiveHook(sessionStart("codex-99", launcherInstanceID: "launch-1"))
+        try await service.sendShortcut(.compact, remoteSessionID: "remote-1")
+
+        let events = await controller.recordedEvents()
+        XCTAssertEqual(events, [
+            .focus("term-7"),
+            .shortcut(.compact, "term-7"),
+        ])
+    }
+
     func testScrollTargetsBoundTerminalWithoutRefocusing() async throws {
         let controller = RecordingTerminalController()
         let service = SessionService(controller: controller, idGenerator: { "remote-1" })
@@ -339,6 +355,7 @@ private actor RecordingTerminalController: TerminalController {
         case focus(String)
         case scroll(Int, String)
         case key(TerminalKey, String)
+        case shortcut(TerminalShortcut, String)
     }
 
     private(set) var events: [Event] = []
@@ -377,6 +394,11 @@ private actor RecordingTerminalController: TerminalController {
 
     func sendKey(_ key: TerminalKey, to terminalTargetID: String) async throws {
         events.append(.key(key, terminalTargetID))
+    }
+
+
+    func sendShortcut(_ shortcut: TerminalShortcut, to terminalTargetID: String) async throws {
+        events.append(.shortcut(shortcut, terminalTargetID))
     }
 }
 
@@ -426,4 +448,6 @@ private actor BlockingFocusTerminalController: TerminalController {
     func scroll(deltaY: Int, terminalTargetID: String) async throws {}
 
     func sendKey(_ key: TerminalKey, to terminalTargetID: String) async throws {}
+
+    func sendShortcut(_ shortcut: TerminalShortcut, to terminalTargetID: String) async throws {}
 }

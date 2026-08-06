@@ -91,7 +91,7 @@ public struct DeviceSyncReducer: Sendable {
             return DeviceSession(
                 remoteSession: session,
                 sessionKey: key,
-                capabilities: [.scroll, .terminalKeys, .ptt]
+                capabilities: [.scroll, .terminalKeys, .ptt, .navigationKeys, .terminalShortcuts]
             )
         }
     }

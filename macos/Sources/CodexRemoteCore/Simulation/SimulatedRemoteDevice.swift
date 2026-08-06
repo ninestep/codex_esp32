@@ -43,11 +43,24 @@ public struct SimulatedScrollExecution: Equatable, Sendable {
     }
 }
 
+public struct SimulatedShortcutExecution: Equatable, Sendable {
+    public let requestID: UInt32
+    public let sessionKey: UInt16
+    public let shortcut: RemoteTerminalShortcut
+
+    public init(requestID: UInt32, sessionKey: UInt16, shortcut: RemoteTerminalShortcut) {
+        self.requestID = requestID
+        self.sessionKey = sessionKey
+        self.shortcut = shortcut
+    }
+}
+
 public struct SimulatedRemoteDevice: Sendable {
     public private(set) var sessions: [UInt16: DeviceSession] = [:]
     public private(set) var selectedSessionKey: UInt16?
     public private(set) var keyExecutions: [SimulatedKeyExecution] = []
     public private(set) var scrollExecutions: [SimulatedScrollExecution] = []
+    public private(set) var shortcutExecutions: [SimulatedShortcutExecution] = []
     public private(set) var audioReceivedSequences: [UInt32] = []
     public private(set) var audioDroppedFrameCount = 0
     public private(set) var isRecording = false
@@ -168,6 +181,24 @@ public struct SimulatedRemoteDevice: Sendable {
             if sessions[sessionKey] != nil, selectedSessionKey == sessionKey, !isRecording {
                 keyExecutions.append(SimulatedKeyExecution(requestID: requestID, sessionKey: sessionKey, key: key))
                 response = .actionResult(requestID: requestID, result: .success, detail: "按键已发送")
+            } else {
+                response = .actionResult(requestID: requestID, result: .invalidState, detail: "会话未激活")
+            }
+            cachedResults[requestID] = response
+            return try makePackets(response, channel: .controlToDevice)
+
+        case let .terminalShortcut(requestID, sessionKey, shortcut):
+            if let cached = cachedResults[requestID] {
+                return try makePackets(cached, channel: .controlToDevice)
+            }
+            let response: BLEMessage
+            if sessions[sessionKey] != nil, selectedSessionKey == sessionKey, !isRecording {
+                shortcutExecutions.append(SimulatedShortcutExecution(
+                    requestID: requestID,
+                    sessionKey: sessionKey,
+                    shortcut: shortcut
+                ))
+                response = .actionResult(requestID: requestID, result: .success, detail: "快捷键已发送")
             } else {
                 response = .actionResult(requestID: requestID, result: .invalidState, detail: "会话未激活")
             }

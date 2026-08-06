@@ -2,7 +2,7 @@
   "byteOrder" : "little",
   "crc" : "CRC32/IEEE",
   "protocolMajor" : 1,
-  "protocolMinor" : 0,
+  "protocolMinor" : 1,
   "vectors" : [
     {
       "file" : "empty-action-result.hex",
@@ -29,12 +29,28 @@
       "sequence" : 2
     },
     {
+      "file" : "terminal-up.hex",
+      "kind" : "envelope",
+      "messageType" : "terminalKey",
+      "name" : "terminal-up",
+      "outcome" : "valid",
+      "sequence" : 3
+    },
+    {
+      "file" : "terminal-compact.hex",
+      "kind" : "envelope",
+      "messageType" : "terminalShortcut",
+      "name" : "terminal-compact",
+      "outcome" : "valid",
+      "sequence" : 4
+    },
+    {
       "file" : "snapshot-four.hex",
       "kind" : "envelope",
       "messageType" : "stateSnapshot",
       "name" : "snapshot-four",
       "outcome" : "valid",
-      "sequence" : 3
+      "sequence" : 5
     },
     {
       "file" : "snapshot-eight.hex",
@@ -42,7 +58,7 @@
       "messageType" : "stateSnapshot",
       "name" : "snapshot-eight",
       "outcome" : "valid",
-      "sequence" : 4
+      "sequence" : 6
     },
     {
       "file" : "state-delta.hex",
@@ -50,7 +66,7 @@
       "messageType" : "stateDelta",
       "name" : "state-delta",
       "outcome" : "valid",
-      "sequence" : 5
+      "sequence" : 7
     },
     {
       "file" : "adpcm-silence.hex",
@@ -58,7 +74,7 @@
       "messageType" : "audioFrame",
       "name" : "adpcm-silence",
       "outcome" : "valid",
-      "sequence" : 6
+      "sequence" : 8
     },
     {
       "file" : "asset-manifest.hex",
@@ -66,7 +82,7 @@
       "messageType" : "assetManifest",
       "name" : "asset-manifest",
       "outcome" : "valid",
-      "sequence" : 7
+      "sequence" : 9
     },
     {
       "file" : "asset-chunk.hex",
@@ -74,7 +90,7 @@
       "messageType" : "assetChunk",
       "name" : "asset-chunk",
       "outcome" : "valid",
-      "sequence" : 8
+      "sequence" : 10
     },
     {
       "file" : "device-info.hex",
@@ -82,7 +98,7 @@
       "messageType" : "deviceInfo",
       "name" : "device-info",
       "outcome" : "valid",
-      "sequence" : 9
+      "sequence" : 11
     },
     {
       "file" : "bad-crc.hex",
@@ -90,7 +106,7 @@
       "messageType" : "selectSession",
       "name" : "bad-crc",
       "outcome" : "crcMismatch",
-      "sequence" : 10
+      "sequence" : 12
     },
     {
       "file" : "incompatible-major.hex",
@@ -98,7 +114,7 @@
       "messageType" : "selectSession",
       "name" : "incompatible-major",
       "outcome" : "incompatibleMajor",
-      "sequence" : 11
+      "sequence" : 13
     },
     {
       "file" : "two-fragment-message.hex",
@@ -106,7 +122,7 @@
       "messageType" : "selectSession",
       "name" : "two-fragment-message",
       "outcome" : "valid",
-      "sequence" : 12
+      "sequence" : 14
     }
   ]
 }

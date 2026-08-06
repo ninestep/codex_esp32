@@ -44,6 +44,7 @@ typedef struct {
         struct { uint32_t request_id; uint16_t session_key; } select_session;
         struct { uint16_t session_key; int16_t delta; uint32_t sequence; } scroll;
         struct { uint32_t request_id; uint16_t session_key; uint8_t key; } terminal_key;
+        struct { uint32_t request_id; uint16_t session_key; uint8_t shortcut; } terminal_shortcut;
         struct { uint32_t request_id; uint16_t session_key; uint32_t first_audio_sequence; } ptt_begin;
         struct { uint32_t request_id; uint16_t session_key; uint32_t last_audio_sequence; } ptt_end;
         struct { uint32_t request_id; uint8_t result; cr_byte_view_t detail; } action_result;

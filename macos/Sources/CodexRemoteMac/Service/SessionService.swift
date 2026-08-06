@@ -120,6 +120,13 @@ public actor SessionService {
         try await controller.sendKey(key, to: session.terminalTargetID)
     }
 
+    public func sendShortcut(_ shortcut: TerminalShortcut, remoteSessionID: String) async throws {
+        let session = try await registry.session(remoteSessionID: remoteSessionID)
+
+        try await controller.focus(terminalTargetID: session.terminalTargetID)
+        try await controller.sendShortcut(shortcut, to: session.terminalTargetID)
+    }
+
     public func scroll(deltaY: Int, remoteSessionID: String) async throws {
         let session = try await registry.session(remoteSessionID: remoteSessionID)
 

@@ -10,6 +10,7 @@ typedef struct {
     void (*select_session)(uint16_t session_key, void *context);
     void (*scroll)(uint16_t session_key, int16_t delta, void *context);
     void (*terminal_key)(uint16_t session_key, uint8_t key, void *context);
+    void (*terminal_shortcut)(uint16_t session_key, uint8_t shortcut, void *context);
     void (*interaction)(void *context);
     void *context;
 } cr_ui_callbacks_t;

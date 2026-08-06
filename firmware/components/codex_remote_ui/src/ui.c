@@ -1,12 +1,11 @@
 #include "codex_remote/ui.h"
 
 #include "lvgl.h"
-#include <stdio.h>
-#include <string.h>
+
+LV_FONT_DECLARE(lv_font_source_han_sans_sc_16_cjk);
 
 typedef struct {
     lv_obj_t *card;
-    lv_obj_t *dot;
     lv_obj_t *title;
     lv_obj_t *directory;
     lv_obj_t *status;
@@ -17,24 +16,41 @@ typedef struct {
 static cr_ui_callbacks_t actions;
 static lv_obj_t *home_page;
 static lv_obj_t *detail_page;
+static lv_obj_t *detail_content_page;
+static lv_obj_t *shortcut_page;
 static lv_obj_t *screensaver_page;
 static lv_obj_t *connection_label;
 static lv_obj_t *detail_title;
 static lv_obj_t *detail_directory;
 static lv_obj_t *detail_status;
+static lv_obj_t *page_toggle;
+static lv_obj_t *page_toggle_label;
 static card_view_t cards[CR_MAX_SESSIONS];
 static uint16_t selected_session_key;
 static bool interaction_locked;
+static bool shortcut_page_active;
 
 static void note_interaction(void)
 {
     if (actions.interaction != NULL) actions.interaction(actions.context);
 }
 
-static lv_color_t state_color(uint8_t state)
+static lv_color_t state_background_color(uint8_t state)
 {
     switch (state) {
-    case 0: return lv_color_hex(0xf4f4f5);
+    case 0: return lv_color_hex(0x27272a);
+    case 1: return lv_color_hex(0x172d55);
+    case 2: return lv_color_hex(0x153724);
+    case 3: return lv_color_hex(0x4a3011);
+    case 4: return lv_color_hex(0x4a1f23);
+    default: return lv_color_hex(0x27272a);
+    }
+}
+
+static lv_color_t state_border_color(uint8_t state)
+{
+    switch (state) {
+    case 0: return lv_color_hex(0xa1a1aa);
     case 1: return lv_color_hex(0x3b82f6);
     case 2: return lv_color_hex(0x22c55e);
     case 3: return lv_color_hex(0xf59e0b);
@@ -46,13 +62,63 @@ static lv_color_t state_color(uint8_t state)
 static const char *state_text(uint8_t state)
 {
     switch (state) {
-    case 0: return "IDLE";
-    case 1: return "THINKING";
-    case 2: return "DONE";
-    case 3: return "INPUT";
-    case 4: return "ERROR";
-    default: return "OFFLINE";
+    case 0: return "空闲";
+    case 1: return "正在处理";
+    case 2: return "已完成";
+    case 3: return "需要输入";
+    case 4: return "错误";
+    default: return "离线";
     }
+}
+
+static lv_obj_t *make_button(lv_obj_t *parent, const char *text)
+{
+    lv_obj_t *button = lv_button_create(parent);
+    lv_obj_set_height(button, 52);
+    lv_obj_t *label = lv_label_create(button);
+    lv_label_set_text(label, text);
+    lv_obj_center(label);
+    return button;
+}
+
+static lv_obj_t *make_positioned_button(
+    lv_obj_t *parent,
+    const char *text,
+    int32_t x,
+    int32_t y,
+    int32_t width,
+    int32_t height,
+    lv_event_cb_t callback,
+    void *user_data
+)
+{
+    lv_obj_t *button = make_button(parent, text);
+    lv_obj_set_size(button, width, height);
+    lv_obj_set_pos(button, x, y);
+    lv_obj_add_event_cb(button, callback, LV_EVENT_CLICKED, user_data);
+    return button;
+}
+
+static lv_obj_t *make_positioned_icon_button(
+    lv_obj_t *parent,
+    const char *symbol,
+    int32_t x,
+    int32_t y,
+    lv_event_cb_t callback,
+    void *user_data
+)
+{
+    lv_obj_t *button = make_positioned_button(parent, symbol, x, y, 62, 62, callback, user_data);
+    lv_obj_set_style_text_font(lv_obj_get_child(button, 0), LV_FONT_DEFAULT, 0);
+    return button;
+}
+
+static void show_detail_content(void)
+{
+    shortcut_page_active = false;
+    lv_obj_add_flag(shortcut_page, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_remove_flag(detail_content_page, LV_OBJ_FLAG_HIDDEN);
+    lv_label_set_text(page_toggle_label, "快捷键 >");
 }
 
 static void card_clicked(lv_event_t *event)
@@ -70,8 +136,24 @@ static void back_clicked(lv_event_t *event)
     (void)event;
     note_interaction();
     if (interaction_locked) return;
+    show_detail_content();
     lv_obj_add_flag(detail_page, LV_OBJ_FLAG_HIDDEN);
     lv_obj_remove_flag(home_page, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void page_toggle_clicked(lv_event_t *event)
+{
+    (void)event;
+    note_interaction();
+    if (interaction_locked || lv_obj_has_flag(page_toggle, LV_OBJ_FLAG_HIDDEN)) return;
+    shortcut_page_active = !shortcut_page_active;
+    if (shortcut_page_active) {
+        lv_obj_add_flag(detail_content_page, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_remove_flag(shortcut_page, LV_OBJ_FLAG_HIDDEN);
+        lv_label_set_text(page_toggle_label, "< 状态");
+    } else {
+        show_detail_content();
+    }
 }
 
 static void key_clicked(lv_event_t *event)
@@ -81,6 +163,15 @@ static void key_clicked(lv_event_t *event)
     if (actions.terminal_key == NULL || selected_session_key == 0) return;
     uintptr_t key = (uintptr_t)lv_event_get_user_data(event);
     actions.terminal_key(selected_session_key, (uint8_t)key, actions.context);
+}
+
+static void shortcut_clicked(lv_event_t *event)
+{
+    note_interaction();
+    if (interaction_locked) return;
+    if (actions.terminal_shortcut == NULL || selected_session_key == 0) return;
+    uintptr_t shortcut = (uintptr_t)lv_event_get_user_data(event);
+    actions.terminal_shortcut(selected_session_key, (uint8_t)shortcut, actions.context);
 }
 
 static int32_t detail_press_y;
@@ -102,16 +193,6 @@ static void detail_pointer(lv_event_t *event)
     else if (delta_y > 24) actions.scroll(selected_session_key, -120, actions.context);
 }
 
-static lv_obj_t *make_button(lv_obj_t *parent, const char *text)
-{
-    lv_obj_t *button = lv_button_create(parent);
-    lv_obj_set_height(button, 54);
-    lv_obj_t *label = lv_label_create(button);
-    lv_label_set_text(label, text);
-    lv_obj_center(label);
-    return button;
-}
-
 static void screensaver_pressed(lv_event_t *event)
 {
     (void)event;
@@ -124,6 +205,7 @@ void cr_ui_init(const cr_ui_callbacks_t *config)
     lv_obj_t *screen = lv_screen_active();
     lv_obj_set_style_bg_color(screen, lv_color_hex(0x09090b), 0);
     lv_obj_set_style_text_color(screen, lv_color_hex(0xfafafa), 0);
+    lv_obj_set_style_text_font(screen, &lv_font_source_han_sans_sc_16_cjk, 0);
 
     home_page = lv_obj_create(screen);
     lv_obj_remove_style_all(home_page);
@@ -134,7 +216,7 @@ void cr_ui_init(const cr_ui_callbacks_t *config)
     lv_obj_align(heading, LV_ALIGN_TOP_LEFT, 18, 16);
 
     connection_label = lv_label_create(home_page);
-    lv_label_set_text(connection_label, "Waiting for Mac...");
+    lv_label_set_text(connection_label, "等待 Mac...");
     lv_obj_set_style_text_color(connection_label, lv_color_hex(0xa1a1aa), 0);
     lv_obj_align(connection_label, LV_ALIGN_TOP_RIGHT, -18, 20);
 
@@ -152,15 +234,11 @@ void cr_ui_init(const cr_ui_callbacks_t *config)
         card->card = lv_button_create(list);
         lv_obj_set_size(card->card, 214, 184);
         lv_obj_set_pos(card->card, (index % 2) * 224, (index / 2) * 194);
-        lv_obj_set_style_bg_color(card->card, lv_color_hex(0x18181b), 0);
+        lv_obj_set_style_bg_color(card->card, state_background_color(5), 0);
+        lv_obj_set_style_border_color(card->card, state_border_color(5), 0);
+        lv_obj_set_style_border_width(card->card, 2, 0);
         lv_obj_set_style_radius(card->card, 18, 0);
         lv_obj_add_event_cb(card->card, card_clicked, LV_EVENT_CLICKED, card);
-
-        card->dot = lv_obj_create(card->card);
-        lv_obj_remove_style_all(card->dot);
-        lv_obj_set_size(card->dot, 12, 12);
-        lv_obj_set_style_radius(card->dot, LV_RADIUS_CIRCLE, 0);
-        lv_obj_align(card->dot, LV_ALIGN_TOP_LEFT, 0, 2);
 
         card->status = lv_label_create(card->card);
         lv_obj_align(card->status, LV_ALIGN_TOP_RIGHT, 0, 0);
@@ -173,7 +251,7 @@ void cr_ui_init(const cr_ui_callbacks_t *config)
         card->directory = lv_label_create(card->card);
         lv_obj_set_width(card->directory, 182);
         lv_label_set_long_mode(card->directory, LV_LABEL_LONG_DOT);
-        lv_obj_set_style_text_color(card->directory, lv_color_hex(0xa1a1aa), 0);
+        lv_obj_set_style_text_color(card->directory, lv_color_hex(0xd4d4d8), 0);
         lv_obj_align(card->directory, LV_ALIGN_BOTTOM_LEFT, 0, -4);
         lv_obj_add_flag(card->card, LV_OBJ_FLAG_HIDDEN);
     }
@@ -183,25 +261,37 @@ void cr_ui_init(const cr_ui_callbacks_t *config)
     lv_obj_set_size(detail_page, LV_PCT(100), LV_PCT(100));
     lv_obj_add_flag(detail_page, LV_OBJ_FLAG_HIDDEN);
 
-    lv_obj_t *back = make_button(detail_page, "BACK");
+    lv_obj_t *back = make_button(detail_page, "返回");
     lv_obj_set_size(back, 90, 46);
     lv_obj_align(back, LV_ALIGN_TOP_LEFT, 14, 14);
     lv_obj_add_event_cb(back, back_clicked, LV_EVENT_CLICKED, NULL);
 
     detail_title = lv_label_create(detail_page);
-    lv_obj_set_width(detail_title, 330);
+    lv_obj_set_width(detail_title, 240);
     lv_label_set_long_mode(detail_title, LV_LABEL_LONG_DOT);
     lv_obj_align(detail_title, LV_ALIGN_TOP_LEFT, 120, 16);
 
     detail_directory = lv_label_create(detail_page);
-    lv_obj_set_width(detail_directory, 330);
+    lv_obj_set_width(detail_directory, 240);
     lv_label_set_long_mode(detail_directory, LV_LABEL_LONG_DOT);
     lv_obj_set_style_text_color(detail_directory, lv_color_hex(0xa1a1aa), 0);
     lv_obj_align(detail_directory, LV_ALIGN_TOP_LEFT, 120, 45);
 
-    lv_obj_t *gesture = lv_obj_create(detail_page);
+    page_toggle = make_button(detail_page, "");
+    lv_obj_set_size(page_toggle, 90, 46);
+    lv_obj_align(page_toggle, LV_ALIGN_TOP_RIGHT, -14, 14);
+    page_toggle_label = lv_obj_get_child(page_toggle, 0);
+    lv_label_set_text(page_toggle_label, "快捷键 >");
+    lv_obj_add_event_cb(page_toggle, page_toggle_clicked, LV_EVENT_CLICKED, NULL);
+
+    detail_content_page = lv_obj_create(detail_page);
+    lv_obj_remove_style_all(detail_content_page);
+    lv_obj_set_size(detail_content_page, 480, 410);
+    lv_obj_set_pos(detail_content_page, 0, 70);
+
+    lv_obj_t *gesture = lv_obj_create(detail_content_page);
     lv_obj_set_size(gesture, 450, 270);
-    lv_obj_align(gesture, LV_ALIGN_CENTER, 0, -10);
+    lv_obj_set_pos(gesture, 15, 0);
     lv_obj_set_style_bg_color(gesture, lv_color_hex(0x18181b), 0);
     lv_obj_set_style_radius(gesture, 18, 0);
     lv_obj_add_event_cb(gesture, detail_pointer, LV_EVENT_PRESSED, NULL);
@@ -211,15 +301,30 @@ void cr_ui_init(const cr_ui_callbacks_t *config)
     lv_label_set_long_mode(detail_status, LV_LABEL_LONG_WRAP);
     lv_obj_center(detail_status);
 
-    lv_obj_t *escape = make_button(detail_page, "CANCEL  ESC");
-    lv_obj_set_size(escape, 216, 58);
-    lv_obj_align(escape, LV_ALIGN_BOTTOM_LEFT, 14, -14);
-    lv_obj_add_event_cb(escape, key_clicked, LV_EVENT_CLICKED, (void *)(uintptr_t)2);
+    make_positioned_button(
+        detail_content_page, "取消  ESC", 122, 338, 108, 52,
+        key_clicked, (void *)(uintptr_t)CR_TERMINAL_KEY_ESCAPE
+    );
+    make_positioned_button(
+        detail_content_page, "确认  ENTER", 242, 338, 115, 52,
+        key_clicked, (void *)(uintptr_t)CR_TERMINAL_KEY_ENTER
+    );
 
-    lv_obj_t *enter = make_button(detail_page, "CONFIRM  ENTER");
-    lv_obj_set_size(enter, 230, 58);
-    lv_obj_align(enter, LV_ALIGN_BOTTOM_RIGHT, -14, -14);
-    lv_obj_add_event_cb(enter, key_clicked, LV_EVENT_CLICKED, (void *)(uintptr_t)1);
+    shortcut_page = lv_obj_create(detail_page);
+    lv_obj_remove_style_all(shortcut_page);
+    lv_obj_set_size(shortcut_page, 480, 410);
+    lv_obj_set_pos(shortcut_page, 0, 70);
+    lv_obj_add_flag(shortcut_page, LV_OBJ_FLAG_HIDDEN);
+
+    make_positioned_button(shortcut_page, "/new", 14, 14, 104, 52, shortcut_clicked, (void *)(uintptr_t)CR_TERMINAL_SHORTCUT_NEW_SESSION);
+    make_positioned_button(shortcut_page, "/q", 362, 14, 104, 52, shortcut_clicked, (void *)(uintptr_t)CR_TERMINAL_SHORTCUT_QUIT);
+    make_positioned_button(shortcut_page, "/w", 14, 344, 104, 52, shortcut_clicked, (void *)(uintptr_t)CR_TERMINAL_SHORTCUT_WRITE);
+    make_positioned_button(shortcut_page, "/plan", 346, 344, 120, 52, shortcut_clicked, (void *)(uintptr_t)CR_TERMINAL_SHORTCUT_PLAN);
+    make_positioned_button(shortcut_page, "/compact", 170, 180, 140, 62, shortcut_clicked, (void *)(uintptr_t)CR_TERMINAL_SHORTCUT_COMPACT);
+    make_positioned_icon_button(shortcut_page, LV_SYMBOL_UP, 209, 100, key_clicked, (void *)(uintptr_t)CR_TERMINAL_KEY_UP);
+    make_positioned_icon_button(shortcut_page, LV_SYMBOL_DOWN, 209, 260, key_clicked, (void *)(uintptr_t)CR_TERMINAL_KEY_DOWN);
+    make_positioned_icon_button(shortcut_page, LV_SYMBOL_LEFT, 90, 180, key_clicked, (void *)(uintptr_t)CR_TERMINAL_KEY_LEFT);
+    make_positioned_icon_button(shortcut_page, LV_SYMBOL_RIGHT, 328, 180, key_clicked, (void *)(uintptr_t)CR_TERMINAL_KEY_RIGHT);
 
     screensaver_page = lv_obj_create(screen);
     lv_obj_remove_style_all(screensaver_page);
@@ -242,7 +347,7 @@ void cr_ui_init(const cr_ui_callbacks_t *config)
 void cr_ui_update(const cr_device_state_t *state)
 {
     interaction_locked = state->ptt_active;
-    lv_label_set_text(connection_label, state->has_snapshot ? "Mac connected" : "Waiting for Mac...");
+    lv_label_set_text(connection_label, state->has_snapshot ? "Mac 已连接" : "等待 Mac...");
     for (size_t index = 0; index < CR_MAX_SESSIONS; index++) {
         card_view_t *card = &cards[index];
         if (index >= state->session_count) {
@@ -256,13 +361,15 @@ void cr_ui_update(const cr_device_state_t *state)
         lv_label_set_text(card->title, session->display_title);
         lv_label_set_text(card->directory, session->working_directory_label);
         lv_label_set_text(card->status, state_text(session->state));
-        lv_obj_set_style_text_color(card->status, state_color(session->state), 0);
-        lv_obj_set_style_bg_color(card->dot, state_color(session->state), 0);
+        lv_obj_set_style_text_color(card->status, state_border_color(session->state), 0);
+        lv_obj_set_style_bg_color(card->card, state_background_color(session->state), 0);
+        lv_obj_set_style_border_color(card->card, state_border_color(session->state), 0);
         lv_obj_remove_flag(card->card, LV_OBJ_FLAG_HIDDEN);
     }
 
     if (!state->has_selection) {
         selected_session_key = 0;
+        show_detail_content();
         lv_obj_add_flag(detail_page, LV_OBJ_FLAG_HIDDEN);
         lv_obj_remove_flag(home_page, LV_OBJ_FLAG_HIDDEN);
         return;
@@ -274,6 +381,15 @@ void cr_ui_update(const cr_device_state_t *state)
         lv_label_set_text(detail_title, session->display_title);
         lv_label_set_text(detail_directory, session->working_directory_label);
         lv_label_set_text(detail_status, session->status_detail[0] == '\0' ? state_text(session->state) : session->status_detail);
+        bool supports_shortcuts = (session->capabilities
+            & (CR_SESSION_CAPABILITY_NAVIGATION_KEYS | CR_SESSION_CAPABILITY_TERMINAL_SHORTCUTS))
+            == (CR_SESSION_CAPABILITY_NAVIGATION_KEYS | CR_SESSION_CAPABILITY_TERMINAL_SHORTCUTS);
+        if (supports_shortcuts) {
+            lv_obj_remove_flag(page_toggle, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            show_detail_content();
+            lv_obj_add_flag(page_toggle, LV_OBJ_FLAG_HIDDEN);
+        }
         lv_obj_add_flag(home_page, LV_OBJ_FLAG_HIDDEN);
         lv_obj_remove_flag(detail_page, LV_OBJ_FLAG_HIDDEN);
         return;

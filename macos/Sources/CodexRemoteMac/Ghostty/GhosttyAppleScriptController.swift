@@ -66,6 +66,17 @@ public struct GhosttyAppleScriptController: TerminalController, Sendable {
         """)
     }
 
+    public func sendShortcut(_ shortcut: TerminalShortcut, to terminalTargetID: String) async throws {
+        let terminalID = try validatedTerminalID(terminalTargetID)
+        _ = try await runner.run(source: """
+        tell application id "com.mitchellh.ghostty"
+            set targetTerm to terminal id "\(terminalID)"
+            input text "\(shortcut.rawValue)" to targetTerm
+            send key "enter" to targetTerm
+        end tell
+        """)
+    }
+
     private func validatedTerminalID(_ terminalTargetID: String) throws -> String {
         let invalidCharacters = CharacterSet(charactersIn: "\"\\\n\r\t")
         guard !terminalTargetID.isEmpty, terminalTargetID.rangeOfCharacter(from: invalidCharacters) == nil else {

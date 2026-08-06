@@ -29,6 +29,19 @@ final class GhosttyAppleScriptControllerTests: XCTestCase {
         XCTAssertTrue(scripts[0].contains(#"send key "escape" to targetTerm"#))
     }
 
+    func testSendShortcutInputsFixedTextThenPressesEnter() async throws {
+        let runner = RecordingAppleScriptRunner()
+        let controller = GhosttyAppleScriptController(runner: runner)
+
+        try await controller.sendShortcut(.plan, to: "term-42")
+
+        let scripts = await runner.scripts
+        XCTAssertEqual(scripts.count, 1)
+        assertUsesGhosttyBundleID(scripts[0])
+        XCTAssertTrue(scripts[0].contains(#"input text "/plan" to targetTerm"#))
+        XCTAssertTrue(scripts[0].contains(#"send key "enter" to targetTerm"#))
+    }
+
     func testScrollUsesPreciseDelta() async throws {
         let runner = RecordingAppleScriptRunner()
         let controller = GhosttyAppleScriptController(runner: runner)

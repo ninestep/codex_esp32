@@ -780,6 +780,8 @@ private actor HelperRecordingTerminalController: TerminalController {
     func sendKey(_ key: TerminalKey, to terminalTargetID: String) async throws {
         events.append(.key(key, terminalTargetID))
     }
+
+    func sendShortcut(_ shortcut: TerminalShortcut, to terminalTargetID: String) async throws {}
 }
 
 private struct SocketFixture {

@@ -171,7 +171,15 @@ cr_result_t cr_message_decode(const cr_envelope_view_t *envelope, cr_message_t *
         if (!read_u32(&reader, &message->body.terminal_key.request_id)
             || !read_u16(&reader, &message->body.terminal_key.session_key)
             || !read_u8(&reader, &message->body.terminal_key.key)) result = CR_ERR_TRUNCATED;
-        else if (message->body.terminal_key.key < 1 || message->body.terminal_key.key > 2) result = CR_ERR_INVALID_PAYLOAD;
+        else if (message->body.terminal_key.key < CR_TERMINAL_KEY_ENTER
+            || message->body.terminal_key.key > CR_TERMINAL_KEY_RIGHT) result = CR_ERR_INVALID_PAYLOAD;
+        break;
+    case CR_MESSAGE_TERMINAL_SHORTCUT:
+        if (!read_u32(&reader, &message->body.terminal_shortcut.request_id)
+            || !read_u16(&reader, &message->body.terminal_shortcut.session_key)
+            || !read_u8(&reader, &message->body.terminal_shortcut.shortcut)) result = CR_ERR_TRUNCATED;
+        else if (message->body.terminal_shortcut.shortcut < CR_TERMINAL_SHORTCUT_NEW_SESSION
+            || message->body.terminal_shortcut.shortcut > CR_TERMINAL_SHORTCUT_COMPACT) result = CR_ERR_INVALID_PAYLOAD;
         break;
     case CR_MESSAGE_PTT_BEGIN:
         if (!read_u32(&reader, &message->body.ptt_begin.request_id)
@@ -377,10 +385,18 @@ static cr_result_t encode_body(const cr_message_t *message, writer_t *writer)
         write_u32(writer, message->body.scroll.sequence);
         break;
     case CR_MESSAGE_TERMINAL_KEY:
-        if (message->body.terminal_key.key < 1 || message->body.terminal_key.key > 2) return CR_ERR_INVALID_PAYLOAD;
+        if (message->body.terminal_key.key < CR_TERMINAL_KEY_ENTER
+            || message->body.terminal_key.key > CR_TERMINAL_KEY_RIGHT) return CR_ERR_INVALID_PAYLOAD;
         write_u32(writer, message->body.terminal_key.request_id);
         write_u16(writer, message->body.terminal_key.session_key);
         write_u8(writer, message->body.terminal_key.key);
+        break;
+    case CR_MESSAGE_TERMINAL_SHORTCUT:
+        if (message->body.terminal_shortcut.shortcut < CR_TERMINAL_SHORTCUT_NEW_SESSION
+            || message->body.terminal_shortcut.shortcut > CR_TERMINAL_SHORTCUT_COMPACT) return CR_ERR_INVALID_PAYLOAD;
+        write_u32(writer, message->body.terminal_shortcut.request_id);
+        write_u16(writer, message->body.terminal_shortcut.session_key);
+        write_u8(writer, message->body.terminal_shortcut.shortcut);
         break;
     case CR_MESSAGE_PTT_BEGIN:
         write_u32(writer, message->body.ptt_begin.request_id);

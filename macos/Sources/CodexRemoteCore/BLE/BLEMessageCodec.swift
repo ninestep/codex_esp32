@@ -37,6 +37,11 @@ public struct BLEMessageCodec: Sendable {
             encoder.append(requestID)
             encoder.append(sessionKey)
             encoder.append(key.rawValue)
+        case let .terminalShortcut(requestID, sessionKey, shortcut):
+            type = .terminalShortcut
+            encoder.append(requestID)
+            encoder.append(sessionKey)
+            encoder.append(shortcut.rawValue)
         case let .pttBegin(requestID, sessionKey, firstAudioSequence):
             type = .pttBegin
             encoder.append(requestID)
@@ -138,6 +143,14 @@ public struct BLEMessageCodec: Sendable {
                 throw BLEMessageCodecError.unknownEnum(field: "terminalKey", rawValue: raw)
             }
             return .terminalKey(requestID: requestID, sessionKey: sessionKey, key: key)
+        case .terminalShortcut:
+            let requestID = try decoder.readUInt32()
+            let sessionKey = try decoder.readUInt16()
+            let raw = try decoder.readUInt8()
+            guard let shortcut = RemoteTerminalShortcut(rawValue: raw) else {
+                throw BLEMessageCodecError.unknownEnum(field: "terminalShortcut", rawValue: raw)
+            }
+            return .terminalShortcut(requestID: requestID, sessionKey: sessionKey, shortcut: shortcut)
         case .pttBegin:
             return .pttBegin(
                 requestID: try decoder.readUInt32(),

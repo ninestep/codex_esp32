@@ -5,6 +5,21 @@ import XCTest
 final class BLEMessageCodecTests: XCTestCase {
     private let codec = BLEMessageCodec()
 
+    func testProtocolV11DefinesNavigationAndShortcutContract() {
+        XCTAssertEqual(BLEProtocolVersion.current, BLEProtocolVersion(major: 1, minor: 1))
+        XCTAssertEqual(RemoteTerminalKey.up.rawValue, 3)
+        XCTAssertEqual(RemoteTerminalKey.down.rawValue, 4)
+        XCTAssertEqual(RemoteTerminalKey.left.rawValue, 5)
+        XCTAssertEqual(RemoteTerminalKey.right.rawValue, 6)
+        XCTAssertEqual(RemoteTerminalShortcut.newSession.rawValue, 1)
+        XCTAssertEqual(RemoteTerminalShortcut.quit.rawValue, 2)
+        XCTAssertEqual(RemoteTerminalShortcut.write.rawValue, 3)
+        XCTAssertEqual(RemoteTerminalShortcut.plan.rawValue, 4)
+        XCTAssertEqual(RemoteTerminalShortcut.compact.rawValue, 5)
+        XCTAssertEqual(DeviceSessionCapabilities.navigationKeys.rawValue, 1 << 3)
+        XCTAssertEqual(DeviceSessionCapabilities.terminalShortcuts.rawValue, 1 << 4)
+    }
+
     func testRoundTripsEveryV1MessageCase() throws {
         let session = makeSession(key: 7)
         let manifest = AssetManifest(
@@ -24,9 +39,11 @@ final class BLEMessageCodecTests: XCTestCase {
             .selectSession(requestID: 1, sessionKey: 7),
             .scroll(sessionKey: 7, delta: -42, sequence: 2),
             .terminalKey(requestID: 3, sessionKey: 7, key: .enter),
-            .pttBegin(requestID: 4, sessionKey: 7, firstAudioSequence: 10),
-            .pttEnd(requestID: 5, sessionKey: 7, lastAudioSequence: 19),
-            .actionResult(requestID: 6, result: .success, detail: "已聚焦"),
+            .terminalKey(requestID: 4, sessionKey: 7, key: .up),
+            .terminalShortcut(requestID: 5, sessionKey: 7, shortcut: .compact),
+            .pttBegin(requestID: 6, sessionKey: 7, firstAudioSequence: 10),
+            .pttEnd(requestID: 7, sessionKey: 7, lastAudioSequence: 19),
+            .actionResult(requestID: 8, result: .success, detail: "已聚焦"),
             .stateSnapshot(generation: 8, sessions: [session]),
             .stateDelta(generation: 8, sequence: 9, session: session),
             .audioFrame(audio),
@@ -88,6 +105,16 @@ final class BLEMessageCodecTests: XCTestCase {
         rewriteCRC(&invalidKey)
         XCTAssertThrowsError(try codec.decode(invalidKey)) { error in
             XCTAssertEqual(error as? BLEMessageCodecError, .unknownEnum(field: "terminalKey", rawValue: 0xff))
+        }
+
+        var invalidShortcut = try codec.encode(
+            .terminalShortcut(requestID: 1, sessionKey: 2, shortcut: .compact),
+            sequence: 1
+        )
+        invalidShortcut[20] = 0xff
+        rewriteCRC(&invalidShortcut)
+        XCTAssertThrowsError(try codec.decode(invalidShortcut)) { error in
+            XCTAssertEqual(error as? BLEMessageCodecError, .unknownEnum(field: "terminalShortcut", rawValue: 0xff))
         }
 
         let envelope = BLEEnvelope(type: .selectSession, sequence: 1, payload: Data([1, 0, 0, 0, 2, 0, 9]))

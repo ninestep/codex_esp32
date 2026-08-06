@@ -80,6 +80,14 @@ static void ui_key(uint16_t session_key, uint8_t key, void *context)
     }
 }
 
+static void ui_shortcut(uint16_t session_key, uint8_t shortcut, void *context)
+{
+    (void)context;
+    if (cr_ble_send_terminal_shortcut(session_key, shortcut) != ESP_OK) {
+        ESP_LOGW(TAG, "terminal shortcut unavailable");
+    }
+}
+
 static void ble_state_changed(const cr_device_state_t *state, void *context)
 {
     (void)context;
@@ -124,11 +132,11 @@ static void execute_input_action(cr_input_action_t action)
         break;
     case CR_INPUT_ENTER:
         note_interaction(NULL);
-        (void)cr_ble_send_terminal_key(device_state.selected_session_key, 1);
+        (void)cr_ble_send_terminal_key(device_state.selected_session_key, CR_TERMINAL_KEY_ENTER);
         break;
     case CR_INPUT_ESCAPE:
         note_interaction(NULL);
-        (void)cr_ble_send_terminal_key(device_state.selected_session_key, 2);
+        (void)cr_ble_send_terminal_key(device_state.selected_session_key, CR_TERMINAL_KEY_ESCAPE);
         break;
     case CR_INPUT_PTT_BEGIN:
         note_interaction(NULL);
@@ -216,6 +224,18 @@ void app_main(void)
     cr_input_state_init(&input_state);
     cr_power_init(&power_state, now_ms());
 
+    ui_state_queue = xQueueCreateStatic(
+        1,
+        sizeof(cr_device_state_t),
+        ui_state_queue_buffer,
+        &ui_state_queue_storage
+    );
+    configASSERT(ui_state_queue != NULL);
+    cr_ble_config_t ble_config = {
+        .on_state_changed = ble_state_changed,
+    };
+    ESP_ERROR_CHECK(cr_ble_start(&device_state, &ble_config));
+
     if (cr_display_start() == NULL) {
         ESP_LOGE(TAG, "failed to initialize Waveshare display");
         return;
@@ -225,19 +245,13 @@ void app_main(void)
         .select_session = ui_select,
         .scroll = ui_scroll,
         .terminal_key = ui_key,
+        .terminal_shortcut = ui_shortcut,
         .interaction = note_interaction,
     };
     cr_ui_init(&ui_callbacks);
     cr_ui_update(&device_state);
     esp_lv_adapter_unlock();
 
-    ui_state_queue = xQueueCreateStatic(
-        1,
-        sizeof(cr_device_state_t),
-        ui_state_queue_buffer,
-        &ui_state_queue_storage
-    );
-    configASSERT(ui_state_queue != NULL);
     ESP_ERROR_CHECK(
         xTaskCreate(ui_state_task, "ui_state", 4096, NULL, 5, NULL) == pdPASS
             ? ESP_OK : ESP_ERR_NO_MEM
@@ -252,10 +266,6 @@ void app_main(void)
     };
     ESP_ERROR_CHECK(gpio_config(&button_config));
 
-    cr_ble_config_t ble_config = {
-        .on_state_changed = ble_state_changed,
-    };
-    ESP_ERROR_CHECK(cr_ble_start(&device_state, &ble_config));
     esp_err_t audio_result = cr_audio_capture_init();
     if (audio_result != ESP_OK) {
         ESP_LOGW(TAG, "microphone unavailable: %s", esp_err_to_name(audio_result));

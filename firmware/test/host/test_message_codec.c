@@ -106,6 +106,8 @@ static void test_all_valid_message_fixtures(void)
         {"macos/Fixtures/ble-v1/empty-action-result.hex", CR_MESSAGE_ACTION_RESULT, 0},
         {"macos/Fixtures/ble-v1/select-session.hex", CR_MESSAGE_SELECT_SESSION, 0},
         {"macos/Fixtures/ble-v1/terminal-enter.hex", CR_MESSAGE_TERMINAL_KEY, 0},
+        {"macos/Fixtures/ble-v1/terminal-up.hex", CR_MESSAGE_TERMINAL_KEY, 0},
+        {"macos/Fixtures/ble-v1/terminal-compact.hex", CR_MESSAGE_TERMINAL_SHORTCUT, 0},
         {"macos/Fixtures/ble-v1/snapshot-four.hex", CR_MESSAGE_STATE_SNAPSHOT, 4},
         {"macos/Fixtures/ble-v1/snapshot-eight.hex", CR_MESSAGE_STATE_SNAPSHOT, 8},
         {"macos/Fixtures/ble-v1/state-delta.hex", CR_MESSAGE_STATE_DELTA, 0},
@@ -147,7 +149,7 @@ static void test_two_fragment_fixture_reassembles(void)
     cr_envelope_view_t envelope = {0};
     assert(cr_envelope_decode(complete.bytes, complete.length, &envelope) == CR_OK);
     assert(envelope.type == CR_MESSAGE_SELECT_SESSION);
-    assert(envelope.sequence == 12);
+    assert(envelope.sequence == 14);
     free(first);
     free(second);
 }
@@ -177,7 +179,9 @@ static void test_non_fixture_message_types_round_trip(void)
 {
     const cr_message_t messages[] = {
         {.type = CR_MESSAGE_SCROLL, .body.scroll = {.session_key = 2, .delta = -9, .sequence = 7}},
-        {.type = CR_MESSAGE_PTT_BEGIN, .body.ptt_begin = {.request_id = 8, .session_key = 2, .first_audio_sequence = 10}},
+        {.type = CR_MESSAGE_TERMINAL_KEY, .body.terminal_key = {.request_id = 7, .session_key = 2, .key = CR_TERMINAL_KEY_RIGHT}},
+        {.type = CR_MESSAGE_TERMINAL_SHORTCUT, .body.terminal_shortcut = {.request_id = 8, .session_key = 2, .shortcut = CR_TERMINAL_SHORTCUT_COMPACT}},
+        {.type = CR_MESSAGE_PTT_BEGIN, .body.ptt_begin = {.request_id = 9, .session_key = 2, .first_audio_sequence = 10}},
         {.type = CR_MESSAGE_PTT_END, .body.ptt_end = {.request_id = 9, .session_key = 2, .last_audio_sequence = 19}},
         {.type = CR_MESSAGE_ASSET_ACKNOWLEDGEMENT, .body.asset_acknowledgement = {.set_id = 4, .asset_id = 3, .next_offset = 128, .result = 1}},
         {.type = CR_MESSAGE_RESYNC_REQUIRED, .body.resync_required = {.reason = 2}},
@@ -189,13 +193,19 @@ static void test_non_fixture_message_types_round_trip(void)
 
 static void test_malformed_payloads_are_rejected(void)
 {
-    const uint8_t invalid_key[] = {1, 0, 0, 0, 2, 0, 3};
+    const uint8_t invalid_key[] = {1, 0, 0, 0, 2, 0, 7};
     cr_envelope_view_t envelope = {
         .type = CR_MESSAGE_TERMINAL_KEY,
         .payload = invalid_key,
         .payload_length = sizeof(invalid_key),
     };
     cr_message_t message = {0};
+    assert(cr_message_decode(&envelope, &message) == CR_ERR_INVALID_PAYLOAD);
+
+    const uint8_t invalid_shortcut[] = {1, 0, 0, 0, 2, 0, 6};
+    envelope.type = CR_MESSAGE_TERMINAL_SHORTCUT;
+    envelope.payload = invalid_shortcut;
+    envelope.payload_length = sizeof(invalid_shortcut);
     assert(cr_message_decode(&envelope, &message) == CR_ERR_INVALID_PAYLOAD);
 
     const uint8_t too_many_sessions[] = {1, 0, 0, 0, 9};

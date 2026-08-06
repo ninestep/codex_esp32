@@ -440,6 +440,15 @@ esp_err_t cr_ble_send_terminal_key(uint16_t session_key, uint8_t key)
     return send_message(&message, control_to_host_handle, true) == 0 ? ESP_OK : ESP_FAIL;
 }
 
+esp_err_t cr_ble_send_terminal_shortcut(uint16_t session_key, uint8_t shortcut)
+{
+    cr_message_t message = {.type = CR_MESSAGE_TERMINAL_SHORTCUT};
+    message.body.terminal_shortcut.request_id = next_request_id++;
+    message.body.terminal_shortcut.session_key = session_key;
+    message.body.terminal_shortcut.shortcut = shortcut;
+    return send_message(&message, control_to_host_handle, true) == 0 ? ESP_OK : ESP_FAIL;
+}
+
 esp_err_t cr_ble_send_ptt_begin(uint16_t session_key, uint32_t first_audio_sequence)
 {
     cr_message_t message = {.type = CR_MESSAGE_PTT_BEGIN};

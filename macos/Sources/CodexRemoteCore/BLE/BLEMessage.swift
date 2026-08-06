@@ -3,6 +3,18 @@ import Foundation
 public enum RemoteTerminalKey: UInt8, Equatable, Sendable {
     case enter = 1
     case escape = 2
+    case up = 3
+    case down = 4
+    case left = 5
+    case right = 6
+}
+
+public enum RemoteTerminalShortcut: UInt8, Equatable, Sendable {
+    case newSession = 1
+    case quit = 2
+    case write = 3
+    case plan = 4
+    case compact = 5
 }
 
 public enum RemoteActionResult: UInt8, Equatable, Sendable {
@@ -32,6 +44,8 @@ public struct DeviceSessionCapabilities: OptionSet, Equatable, Sendable {
     public static let scroll = Self(rawValue: 1 << 0)
     public static let terminalKeys = Self(rawValue: 1 << 1)
     public static let ptt = Self(rawValue: 1 << 2)
+    public static let navigationKeys = Self(rawValue: 1 << 3)
+    public static let terminalShortcuts = Self(rawValue: 1 << 4)
 }
 
 public struct DeviceSession: Equatable, Sendable {
@@ -217,6 +231,7 @@ public enum BLEMessage: Equatable, Sendable {
     case assetAcknowledgement(setID: UInt32, assetID: UInt16, nextOffset: UInt32, result: AssetAckResult)
     case deviceInfo(DeviceInformation)
     case resyncRequired(reason: ResyncReason)
+    case terminalShortcut(requestID: UInt32, sessionKey: UInt16, shortcut: RemoteTerminalShortcut)
 }
 
 public struct BLEDecodedMessage: Equatable, Sendable {

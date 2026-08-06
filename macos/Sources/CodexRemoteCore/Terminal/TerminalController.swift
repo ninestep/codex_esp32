@@ -1,5 +1,13 @@
 public enum TerminalKey: String, Codable, Sendable {
-    case enter, escape
+    case enter, escape, up, down, left, right
+}
+
+public enum TerminalShortcut: String, Codable, Sendable {
+    case newSession = "/new"
+    case quit = "/q"
+    case write = "/w"
+    case plan = "/plan"
+    case compact = "/compact"
 }
 
 public struct TerminalContext: Equatable, Sendable {
@@ -19,4 +27,5 @@ public protocol TerminalController: Sendable {
     func focus(terminalTargetID: String) async throws
     func scroll(deltaY: Int, terminalTargetID: String) async throws
     func sendKey(_ key: TerminalKey, to terminalTargetID: String) async throws
+    func sendShortcut(_ shortcut: TerminalShortcut, to terminalTargetID: String) async throws
 }

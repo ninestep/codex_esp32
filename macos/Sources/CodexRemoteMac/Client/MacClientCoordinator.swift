@@ -5,6 +5,7 @@ public protocol SessionClient: Sendable {
     func activeSessions(limit: Int) async -> [RemoteSession]
     func selectSession(remoteSessionID: String) async throws -> RemoteSession
     func sendKey(_ key: TerminalKey, remoteSessionID: String) async throws
+    func sendShortcut(_ shortcut: TerminalShortcut, remoteSessionID: String) async throws
     func scroll(deltaY: Int, remoteSessionID: String) async throws
 }
 
@@ -125,12 +126,40 @@ public final class MacClientCoordinator {
                       let remoteSessionID = self.syncReducer.remoteSessionID(for: sessionKey) else {
                     return .actionResult(requestID: requestID, result: .invalidState, detail: "请先进入会话")
                 }
-                let key: TerminalKey = remoteKey == .enter ? .enter : .escape
+                let key: TerminalKey = switch remoteKey {
+                case .enter: .enter
+                case .escape: .escape
+                case .up: .up
+                case .down: .down
+                case .left: .left
+                case .right: .right
+                }
                 do {
                     try await self.sessionClient.sendKey(key, remoteSessionID: remoteSessionID)
                     return .actionResult(requestID: requestID, result: .success, detail: "")
                 } catch {
                     return .actionResult(requestID: requestID, result: .unavailable, detail: "按键发送失败")
+                }
+            }
+
+        case let .terminalShortcut(requestID, sessionKey, remoteShortcut):
+            try await handleRequest(requestID: requestID) {
+                guard self.selectedSessionKey == sessionKey,
+                      let remoteSessionID = self.syncReducer.remoteSessionID(for: sessionKey) else {
+                    return .actionResult(requestID: requestID, result: .invalidState, detail: "请先进入会话")
+                }
+                let shortcut: TerminalShortcut = switch remoteShortcut {
+                case .newSession: .newSession
+                case .quit: .quit
+                case .write: .write
+                case .plan: .plan
+                case .compact: .compact
+                }
+                do {
+                    try await self.sessionClient.sendShortcut(shortcut, remoteSessionID: remoteSessionID)
+                    return .actionResult(requestID: requestID, result: .success, detail: "")
+                } catch {
+                    return .actionResult(requestID: requestID, result: .unavailable, detail: "快捷键发送失败")
                 }
             }
 

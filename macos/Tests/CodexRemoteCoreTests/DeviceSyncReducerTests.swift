@@ -96,7 +96,7 @@ final class DeviceSyncReducerTests: XCTestCase {
             state: state,
             statusDetail: state == .requiresInput ? "requiresInput" : state == .working ? "working" : "idle",
             unread: false,
-            capabilities: [.scroll, .terminalKeys, .ptt],
+            capabilities: [.scroll, .terminalKeys, .ptt, .navigationKeys, .terminalShortcuts],
             updatedAtMilliseconds: updatedAt * 1_000
         )
     }

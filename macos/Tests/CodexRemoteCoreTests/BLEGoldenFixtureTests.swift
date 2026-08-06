@@ -10,7 +10,7 @@ final class BLEGoldenFixtureTests: XCTestCase {
         let generated = try makeFixtureSet()
 
         XCTAssertEqual(manifest.protocolMajor, 1)
-        XCTAssertEqual(manifest.protocolMinor, 0)
+        XCTAssertEqual(manifest.protocolMinor, 1)
         XCTAssertEqual(Set(manifest.vectors.map(\.file)), Set(generated.files.keys.filter { $0.hasSuffix(".hex") }))
 
         for vector in manifest.vectors {
@@ -64,13 +64,15 @@ final class BLEGoldenFixtureTests: XCTestCase {
             ("empty-action-result", "actionResult", 0, .actionResult(requestID: 0, result: .success, detail: "")),
             ("select-session", "selectSession", 1, .selectSession(requestID: 1, sessionKey: 2)),
             ("terminal-enter", "terminalKey", 2, .terminalKey(requestID: 3, sessionKey: 2, key: .enter)),
-            ("snapshot-four", "stateSnapshot", 3, .stateSnapshot(generation: 4, sessions: Array(sessions.prefix(4)))),
-            ("snapshot-eight", "stateSnapshot", 4, .stateSnapshot(generation: 5, sessions: sessions)),
-            ("state-delta", "stateDelta", 5, .stateDelta(generation: 5, sequence: 1, session: sessions[0])),
-            ("adpcm-silence", "audioFrame", 6, .audioFrame(silence)),
-            ("asset-manifest", "assetManifest", 7, .assetManifest(manifest)),
-            ("asset-chunk", "assetChunk", 8, .assetChunk(AssetChunk(setID: 9, assetID: 1, offset: 0, bytes: jpeg))),
-            ("device-info", "deviceInfo", 9, .deviceInfo(DeviceInformation(firmwareVersion: "sim-1", capabilities: [.display, .microphone], batteryPercent: 80))),
+            ("terminal-up", "terminalKey", 3, .terminalKey(requestID: 4, sessionKey: 2, key: .up)),
+            ("terminal-compact", "terminalShortcut", 4, .terminalShortcut(requestID: 5, sessionKey: 2, shortcut: .compact)),
+            ("snapshot-four", "stateSnapshot", 5, .stateSnapshot(generation: 4, sessions: Array(sessions.prefix(4)))),
+            ("snapshot-eight", "stateSnapshot", 6, .stateSnapshot(generation: 5, sessions: sessions)),
+            ("state-delta", "stateDelta", 7, .stateDelta(generation: 5, sequence: 1, session: sessions[0])),
+            ("adpcm-silence", "audioFrame", 8, .audioFrame(silence)),
+            ("asset-manifest", "assetManifest", 9, .assetManifest(manifest)),
+            ("asset-chunk", "assetChunk", 10, .assetChunk(AssetChunk(setID: 9, assetID: 1, offset: 0, bytes: jpeg))),
+            ("device-info", "deviceInfo", 11, .deviceInfo(DeviceInformation(firmwareVersion: "sim-1", capabilities: [.display, .microphone], batteryPercent: 80))),
         ]
 
         var files: [String: String] = [:]
@@ -81,24 +83,24 @@ final class BLEGoldenFixtureTests: XCTestCase {
             vectors.append(FixtureVector(name: name, file: file, kind: "envelope", messageType: type, sequence: sequence, outcome: "valid"))
         }
 
-        var badCRC = try codec.encode(.selectSession(requestID: 1, sessionKey: 2), sequence: 10)
+        var badCRC = try codec.encode(.selectSession(requestID: 1, sessionKey: 2), sequence: 12)
         badCRC[14] ^= 0xff
         files["bad-crc.hex"] = badCRC.hexLine
-        vectors.append(FixtureVector(name: "bad-crc", file: "bad-crc.hex", kind: "envelope", messageType: "selectSession", sequence: 10, outcome: "crcMismatch"))
+        vectors.append(FixtureVector(name: "bad-crc", file: "bad-crc.hex", kind: "envelope", messageType: "selectSession", sequence: 12, outcome: "crcMismatch"))
 
-        var incompatible = try codec.encode(.selectSession(requestID: 1, sessionKey: 2), sequence: 11)
+        var incompatible = try codec.encode(.selectSession(requestID: 1, sessionKey: 2), sequence: 13)
         incompatible[2] = 2
         rewriteCRC(&incompatible)
         files["incompatible-major.hex"] = incompatible.hexLine
-        vectors.append(FixtureVector(name: "incompatible-major", file: "incompatible-major.hex", kind: "envelope", messageType: "selectSession", sequence: 11, outcome: "incompatibleMajor"))
+        vectors.append(FixtureVector(name: "incompatible-major", file: "incompatible-major.hex", kind: "envelope", messageType: "selectSession", sequence: 13, outcome: "incompatibleMajor"))
 
-        let fragmentedEnvelope = try codec.encode(.selectSession(requestID: 4, sessionKey: 3), sequence: 12)
+        let fragmentedEnvelope = try codec.encode(.selectSession(requestID: 4, sessionKey: 3), sequence: 14)
         let fragments = try BLEFragmentCodec().fragment(fragmentedEnvelope, messageID: 99, maximumPacketBytes: 20)
         let fragmentFile = "two-fragment-message.hex"
         files[fragmentFile] = fragments.map(\.hex).joined(separator: "\n") + "\n"
-        vectors.append(FixtureVector(name: "two-fragment-message", file: fragmentFile, kind: "fragmentSet", messageType: "selectSession", sequence: 12, outcome: "valid"))
+        vectors.append(FixtureVector(name: "two-fragment-message", file: fragmentFile, kind: "fragmentSet", messageType: "selectSession", sequence: 14, outcome: "valid"))
 
-        let fixtureManifest = FixtureManifest(protocolMajor: 1, protocolMinor: 0, byteOrder: "little", crc: "CRC32/IEEE", vectors: vectors)
+        let fixtureManifest = FixtureManifest(protocolMajor: 1, protocolMinor: 1, byteOrder: "little", crc: "CRC32/IEEE", vectors: vectors)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         var manifestData = try encoder.encode(fixtureManifest)
@@ -144,7 +146,7 @@ final class BLEGoldenFixtureTests: XCTestCase {
             state: key.isMultiple(of: 2) ? .working : .idle,
             statusDetail: "BLE v1",
             unread: false,
-            capabilities: [.scroll, .terminalKeys, .ptt],
+            capabilities: [.scroll, .terminalKeys, .ptt, .navigationKeys, .terminalShortcuts],
             updatedAtMilliseconds: 1_700_000_000_000 + UInt64(key)
         )
     }

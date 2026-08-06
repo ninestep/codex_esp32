@@ -184,4 +184,6 @@ private actor StartupGateTerminalController: TerminalController {
     func scroll(deltaY: Int, terminalTargetID: String) async throws {}
 
     func sendKey(_ key: TerminalKey, to terminalTargetID: String) async throws {}
+
+    func sendShortcut(_ shortcut: TerminalShortcut, to terminalTargetID: String) async throws {}
 }

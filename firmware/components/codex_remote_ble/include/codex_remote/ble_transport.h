@@ -17,6 +17,7 @@ esp_err_t cr_ble_start(cr_device_state_t *device_state, const cr_ble_config_t *c
 esp_err_t cr_ble_send_select(uint16_t session_key);
 esp_err_t cr_ble_send_scroll(uint16_t session_key, int16_t delta);
 esp_err_t cr_ble_send_terminal_key(uint16_t session_key, uint8_t key);
+esp_err_t cr_ble_send_terminal_shortcut(uint16_t session_key, uint8_t shortcut);
 esp_err_t cr_ble_send_ptt_begin(uint16_t session_key, uint32_t first_audio_sequence);
 esp_err_t cr_ble_send_ptt_end(uint16_t session_key, uint32_t last_audio_sequence);
 esp_err_t cr_ble_send_audio_frame(const cr_message_t *audio_frame);

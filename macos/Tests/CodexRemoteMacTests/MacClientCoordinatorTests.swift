@@ -18,7 +18,7 @@ final class MacClientCoordinatorTests: XCTestCase {
             .stateSnapshot(generation: 1, sessions: [DeviceSession(
                 remoteSession: session,
                 sessionKey: 1,
-                capabilities: [.scroll, .terminalKeys, .ptt]
+                capabilities: [.scroll, .terminalKeys, .ptt, .navigationKeys, .terminalShortcuts]
             )]),
         ])
     }
@@ -39,7 +39,7 @@ final class MacClientCoordinatorTests: XCTestCase {
         ])
     }
 
-    func testTerminalKeyRequiresSelectedSessionAndMapsEnterAndEscape() async throws {
+    func testTerminalKeyRequiresSelectedSessionAndMapsAllSupportedKeys() async throws {
         let service = SessionClientSpy(sessions: [makeSession(id: "remote-1")])
         let transport = BluetoothTransportSpy(maximumWriteValueLength: 64)
         let coordinator = MacClientCoordinator(sessionClient: service, transport: transport)
@@ -50,17 +50,51 @@ final class MacClientCoordinatorTests: XCTestCase {
         try await coordinator.receive(message: .selectSession(requestID: 21, sessionKey: 1))
         try await coordinator.receive(message: .terminalKey(requestID: 22, sessionKey: 1, key: .enter))
         try await coordinator.receive(message: .terminalKey(requestID: 23, sessionKey: 1, key: .escape))
+        try await coordinator.receive(message: .terminalKey(requestID: 24, sessionKey: 1, key: .up))
+        try await coordinator.receive(message: .terminalKey(requestID: 25, sessionKey: 1, key: .down))
+        try await coordinator.receive(message: .terminalKey(requestID: 26, sessionKey: 1, key: .left))
+        try await coordinator.receive(message: .terminalKey(requestID: 27, sessionKey: 1, key: .right))
 
         let sentKeys = await service.sentKeys()
         XCTAssertEqual(sentKeys, [
             SentKey(key: .enter, remoteSessionID: "remote-1"),
             SentKey(key: .escape, remoteSessionID: "remote-1"),
+            SentKey(key: .up, remoteSessionID: "remote-1"),
+            SentKey(key: .down, remoteSessionID: "remote-1"),
+            SentKey(key: .left, remoteSessionID: "remote-1"),
+            SentKey(key: .right, remoteSessionID: "remote-1"),
         ])
         XCTAssertEqual(try transport.decodedMessages(), [
             .actionResult(requestID: 20, result: .invalidState, detail: "请先进入会话"),
             .actionResult(requestID: 21, result: .success, detail: ""),
             .actionResult(requestID: 22, result: .success, detail: ""),
             .actionResult(requestID: 23, result: .success, detail: ""),
+            .actionResult(requestID: 24, result: .success, detail: ""),
+            .actionResult(requestID: 25, result: .success, detail: ""),
+            .actionResult(requestID: 26, result: .success, detail: ""),
+            .actionResult(requestID: 27, result: .success, detail: ""),
+        ])
+    }
+
+    func testTerminalShortcutRequiresSelectedSessionAndMapsFixedCommand() async throws {
+        let service = SessionClientSpy(sessions: [makeSession(id: "remote-1")])
+        let transport = BluetoothTransportSpy(maximumWriteValueLength: 64)
+        let coordinator = MacClientCoordinator(sessionClient: service, transport: transport)
+        try await coordinator.receive(message: .deviceInfo(deviceInfo()))
+        transport.removeAllPackets()
+
+        try await coordinator.receive(message: .terminalShortcut(requestID: 28, sessionKey: 1, shortcut: .plan))
+        try await coordinator.receive(message: .selectSession(requestID: 29, sessionKey: 1))
+        try await coordinator.receive(message: .terminalShortcut(requestID: 30, sessionKey: 1, shortcut: .plan))
+
+        let sentShortcuts = await service.sentShortcuts()
+        XCTAssertEqual(sentShortcuts, [
+            SentShortcut(shortcut: .plan, remoteSessionID: "remote-1"),
+        ])
+        XCTAssertEqual(try transport.decodedMessages(), [
+            .actionResult(requestID: 28, result: .invalidState, detail: "请先进入会话"),
+            .actionResult(requestID: 29, result: .success, detail: ""),
+            .actionResult(requestID: 30, result: .success, detail: ""),
         ])
     }
 
@@ -210,11 +244,17 @@ private struct ScrollAction: Equatable, Sendable {
     let remoteSessionID: String
 }
 
+private struct SentShortcut: Equatable, Sendable {
+    let shortcut: TerminalShortcut
+    let remoteSessionID: String
+}
+
 private actor SessionClientSpy: SessionClient {
     private var sessions: [RemoteSession]
     private var selected: [String] = []
     private var keys: [SentKey] = []
     private var scrollActions: [ScrollAction] = []
+    private var shortcuts: [SentShortcut] = []
 
     init(sessions: [RemoteSession]) {
         self.sessions = sessions
@@ -237,9 +277,15 @@ private actor SessionClientSpy: SessionClient {
         scrollActions.append(ScrollAction(deltaY: deltaY, remoteSessionID: remoteSessionID))
     }
 
+
+    func sendShortcut(_ shortcut: TerminalShortcut, remoteSessionID: String) {
+        shortcuts.append(SentShortcut(shortcut: shortcut, remoteSessionID: remoteSessionID))
+    }
+
     func selectedSessionIDs() -> [String] { selected }
     func sentKeys() -> [SentKey] { keys }
     func scrolls() -> [ScrollAction] { scrollActions }
+    func sentShortcuts() -> [SentShortcut] { shortcuts }
 }
 
 @MainActor
