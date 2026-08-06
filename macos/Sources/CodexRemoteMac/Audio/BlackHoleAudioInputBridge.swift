@@ -2,9 +2,11 @@ import AudioToolbox
 import AVFoundation
 import CodexRemoteCore
 import Foundation
+import OSLog
 
 @MainActor
 public final class BlackHoleAudioInputBridge: AudioInputHandling {
+    private static let logger = Logger(subsystem: "CodexRemote", category: "BlackHoleAudio")
     public var dependencyStatus: AudioDependencyStatus {
         blackHoleDeviceIDProvider() == nil ? .blackHoleMissing : .ready
     }
@@ -47,7 +49,9 @@ public final class BlackHoleAudioInputBridge: AudioInputHandling {
         hotkeyMode: HotkeyTriggerMode,
         blackHoleDeviceID: AudioDeviceID?,
         originalInputDeviceID: AudioDeviceID?,
-        emitter: any HotkeyEmitting
+        emitter: any HotkeyEmitting,
+        setDefaultInputDeviceIDOperation: @escaping (AudioDeviceID) throws -> Void = { _ in },
+        configureEngineOperation: @escaping (AudioDeviceID) throws -> Void = { _ in }
     ) {
         self.catalog = CoreAudioDeviceCatalog()
         self.emitter = emitter
@@ -55,8 +59,8 @@ public final class BlackHoleAudioInputBridge: AudioInputHandling {
         self.hotkeyMode = hotkeyMode
         self.blackHoleDeviceIDProvider = { blackHoleDeviceID }
         self.originalInputDeviceIDProvider = { originalInputDeviceID }
-        self.setDefaultInputDeviceIDOperation = { _ in }
-        self.configureEngineOperation = { _ in }
+        self.setDefaultInputDeviceIDOperation = setDefaultInputDeviceIDOperation
+        self.configureEngineOperation = configureEngineOperation
         self.playbackCompletionOperation = {}
     }
 
@@ -71,15 +75,15 @@ public final class BlackHoleAudioInputBridge: AudioInputHandling {
 
         originalInputDeviceID = originalInput
         do {
-            if let configureEngineOperation {
-                try configureEngineOperation(blackHoleDeviceID)
-            } else {
-                try configureEngine(outputDeviceID: blackHoleDeviceID)
-            }
             if let setDefaultInputDeviceIDOperation {
                 try setDefaultInputDeviceIDOperation(blackHoleDeviceID)
             } else {
                 try catalog.setDefaultInputDeviceID(blackHoleDeviceID)
+            }
+            if let configureEngineOperation {
+                try configureEngineOperation(blackHoleDeviceID)
+            } else {
+                try configureEngine(outputDeviceID: blackHoleDeviceID)
             }
             try triggerBegin(hotkey)
             activeHotkey = hotkey
@@ -123,6 +127,29 @@ public final class BlackHoleAudioInputBridge: AudioInputHandling {
 
     private func configureEngine(outputDeviceID: AudioDeviceID) throws {
         engine.attach(player)
+        let outputNode = engine.outputNode
+        guard let audioUnit = outputNode.audioUnit else {
+            Self.logger.error("BlackHole output AudioUnit is unavailable")
+            throw AudioInputBridgeError.audioSystemFailure
+        }
+        var deviceID = outputDeviceID
+        let status = AudioUnitSetProperty(
+            audioUnit,
+            kAudioOutputUnitProperty_CurrentDevice,
+            kAudioUnitScope_Global,
+            0,
+            &deviceID,
+            UInt32(MemoryLayout<AudioDeviceID>.size)
+        )
+        guard status == noErr else {
+            Self.logger.error("Binding AVAudioEngine to BlackHole failed with OSStatus \(status)")
+            throw AudioInputBridgeError.audioSystemFailure
+        }
+        let outputFormat = outputNode.inputFormat(forBus: 0)
+        guard outputFormat.sampleRate > 0, outputFormat.channelCount > 0 else {
+            Self.logger.error("BlackHole reported an invalid output format")
+            throw AudioInputBridgeError.audioSystemFailure
+        }
         guard let format = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
             sampleRate: 16_000,
@@ -130,19 +157,12 @@ public final class BlackHoleAudioInputBridge: AudioInputHandling {
             interleaved: false
         ) else { throw AudioInputBridgeError.audioSystemFailure }
         engine.connect(player, to: engine.mainMixerNode, format: format)
-        var deviceID = outputDeviceID
-        let status = AudioUnitSetProperty(
-            engine.outputNode.audioUnit!,
-            kAudioOutputUnitProperty_CurrentDevice,
-            kAudioUnitScope_Global,
-            0,
-            &deviceID,
-            UInt32(MemoryLayout<AudioDeviceID>.size)
-        )
-        guard status == noErr else { throw AudioInputBridgeError.audioSystemFailure }
+        engine.connect(engine.mainMixerNode, to: outputNode, format: outputFormat)
+        engine.prepare()
         do {
             try engine.start()
         } catch {
+            Self.logger.error("Starting BlackHole audio engine failed: \(error.localizedDescription, privacy: .public)")
             throw AudioInputBridgeError.audioSystemFailure
         }
         player.play()

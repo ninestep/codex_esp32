@@ -5,6 +5,7 @@
 #include "bsp/esp-bsp.h"
 #include "driver/i2s_std.h"
 #include "esp_codec_dev.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -41,6 +42,17 @@ static int16_t pcm_buffer[CR_AUDIO_SAMPLE_COUNT];
 static uint8_t encoded_buffer[CR_AUDIO_ENCODED_BYTES];
 static cr_message_t encoded_message;
 static stored_frame_t streaming_frame;
+
+static void log_internal_heap(const char *stage)
+{
+    ESP_LOGI(
+        TAG,
+        "%s: internal heap free=%u largest=%u",
+        stage,
+        (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+        (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)
+    );
+}
 
 static void send_stored(const stored_frame_t *stored)
 {
@@ -116,6 +128,7 @@ static void capture_task(void *context)
 
 esp_err_t cr_audio_capture_init(void)
 {
+    log_internal_heap("audio init begin");
     i2s_std_config_t i2s_config = {
         .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(16000),
         .slot_cfg = I2S_STD_PHILIP_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO),
@@ -128,7 +141,9 @@ esp_err_t cr_audio_capture_init(void)
             .invert_flags = {0},
         },
     };
-    esp_err_t result = bsp_audio_init(&i2s_config);
+    esp_err_t result = bsp_i2c_init();
+    if (result != ESP_OK) return result;
+    result = bsp_audio_init(&i2s_config);
     if (result != ESP_OK) return result;
     microphone = bsp_audio_codec_microphone_init();
     if (microphone == NULL) return ESP_FAIL;
@@ -138,11 +153,17 @@ esp_err_t cr_audio_capture_init(void)
         .sample_rate = 16000,
     };
     if (esp_codec_dev_open(microphone, &sample_info) != ESP_CODEC_DEV_OK) return ESP_FAIL;
+    log_internal_heap("audio codec opened");
     lock = xSemaphoreCreateMutex();
-    if (lock == NULL) return ESP_ERR_NO_MEM;
-    if (xTaskCreate(capture_task, "audio_capture", 4096, NULL, 6, NULL) != pdPASS) {
+    if (lock == NULL) {
+        log_internal_heap("audio mutex allocation failed");
         return ESP_ERR_NO_MEM;
     }
+    if (xTaskCreate(capture_task, "audio_capture", 4096, NULL, 6, NULL) != pdPASS) {
+        log_internal_heap("audio task allocation failed");
+        return ESP_ERR_NO_MEM;
+    }
+    log_internal_heap("audio init ready");
     return ESP_OK;
 }
 

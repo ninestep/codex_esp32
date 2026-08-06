@@ -27,6 +27,11 @@ int main(void)
     assert(strstr(audio_source, "static uint8_t encoded_buffer[CR_AUDIO_ENCODED_BYTES]") != NULL);
     assert(strstr(audio_source, "static cr_message_t encoded_message") != NULL);
     assert(strstr(audio_source, "static stored_frame_t streaming_frame") != NULL);
+    const char *i2c_init = strstr(audio_source, "bsp_i2c_init()");
+    const char *i2s_init = strstr(audio_source, "bsp_audio_init(&i2s_config)");
+    assert(i2c_init != NULL);
+    assert(i2s_init != NULL);
+    assert(i2c_init < i2s_init);
     const char *capture_task = strstr(audio_source, "static void capture_task");
     const char *capture_task_end = strstr(audio_source, "esp_err_t cr_audio_capture_init");
     assert(capture_task != NULL);
@@ -43,6 +48,19 @@ int main(void)
         sizeof(cmake_source)
     );
     assert(strstr(cmake_source, "-Wframe-larger-than=1024") != NULL);
+
+    char app_source[16384];
+    read_source("firmware/main/app_main.c", app_source, sizeof(app_source));
+    const char *audio_init = strstr(app_source, "cr_audio_capture_init()");
+    const char *display_init = strstr(app_source, "cr_display_start()");
+    assert(audio_init != NULL);
+    assert(display_init != NULL);
+    assert(audio_init < display_init);
+    assert(strstr(app_source, "if (cr_audio_capture_prepare(&pending_first_audio_sequence) != ESP_OK)") != NULL);
+    assert(strstr(app_source, "if (cr_audio_capture_commit() != ESP_OK)") != NULL);
+    assert(strstr(app_source, "cr_ble_send_ptt_end(device_state.selected_session_key, 0)") != NULL);
+    assert(strstr(audio_source, "heap_caps_get_free_size(MALLOC_CAP_INTERNAL)") != NULL);
+    assert(strstr(audio_source, "heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)") != NULL);
 
     puts("test_audio_runtime: PASS");
     return 0;

@@ -28,6 +28,8 @@ static cr_power_state_t power_state;
 static cr_power_mode_t current_power_mode;
 static portMUX_TYPE power_lock = portMUX_INITIALIZER_UNLOCKED;
 static uint32_t pending_first_audio_sequence;
+static bool audio_available;
+static bool audio_prepared;
 static QueueHandle_t ui_state_queue;
 static StaticQueue_t ui_state_queue_storage;
 static uint8_t ui_state_queue_buffer[sizeof(cr_device_state_t)];
@@ -125,10 +127,20 @@ static void execute_input_action(cr_input_action_t action)
     if (!device_state.has_selection) return;
     switch (action) {
     case CR_INPUT_PRE_ROLL_BEGIN:
-        (void)cr_audio_capture_prepare(&pending_first_audio_sequence);
+        audio_prepared = false;
+        if (!audio_available) {
+            ESP_LOGW(TAG, "PTT unavailable: microphone not initialized");
+            break;
+        }
+        if (cr_audio_capture_prepare(&pending_first_audio_sequence) != ESP_OK) {
+            ESP_LOGW(TAG, "PTT unavailable: audio pre-roll failed");
+            break;
+        }
+        audio_prepared = true;
         break;
     case CR_INPUT_PRE_ROLL_DISCARD:
         cr_audio_capture_discard();
+        audio_prepared = false;
         break;
     case CR_INPUT_ENTER:
         note_interaction(NULL);
@@ -140,14 +152,26 @@ static void execute_input_action(cr_input_action_t action)
         break;
     case CR_INPUT_PTT_BEGIN:
         note_interaction(NULL);
+        if (!audio_prepared) {
+            ESP_LOGW(TAG, "PTT begin ignored: audio pre-roll is not ready");
+            break;
+        }
         if (cr_ble_send_ptt_begin(device_state.selected_session_key, pending_first_audio_sequence) == ESP_OK) {
+            if (cr_audio_capture_commit() != ESP_OK) {
+                ESP_LOGW(TAG, "PTT aborted: audio commit failed");
+                (void)cr_ble_send_ptt_end(device_state.selected_session_key, 0);
+                cr_audio_capture_discard();
+                audio_prepared = false;
+                break;
+            }
             portENTER_CRITICAL(&power_lock);
             device_state.ptt_active = true;
             portEXIT_CRITICAL(&power_lock);
-            (void)cr_audio_capture_commit();
+            audio_prepared = false;
             ble_state_changed(&device_state, NULL);
         } else {
             cr_audio_capture_discard();
+            audio_prepared = false;
         }
         break;
     case CR_INPUT_PTT_END: {
@@ -236,6 +260,12 @@ void app_main(void)
     };
     ESP_ERROR_CHECK(cr_ble_start(&device_state, &ble_config));
 
+    esp_err_t audio_result = cr_audio_capture_init();
+    audio_available = audio_result == ESP_OK;
+    if (!audio_available) {
+        ESP_LOGW(TAG, "microphone unavailable: %s", esp_err_to_name(audio_result));
+    }
+
     if (cr_display_start() == NULL) {
         ESP_LOGE(TAG, "failed to initialize Waveshare display");
         return;
@@ -266,12 +296,14 @@ void app_main(void)
     };
     ESP_ERROR_CHECK(gpio_config(&button_config));
 
-    esp_err_t audio_result = cr_audio_capture_init();
-    if (audio_result != ESP_OK) {
-        ESP_LOGW(TAG, "microphone unavailable: %s", esp_err_to_name(audio_result));
-    }
-    xTaskCreate(button_task, "user_button", 4096, NULL, 5, NULL);
-    xTaskCreate(power_task, "display_power", 3072, NULL, 4, NULL);
+    ESP_ERROR_CHECK(
+        xTaskCreate(button_task, "user_button", 4096, NULL, 5, NULL) == pdPASS
+            ? ESP_OK : ESP_ERR_NO_MEM
+    );
+    ESP_ERROR_CHECK(
+        xTaskCreate(power_task, "display_power", 3072, NULL, 4, NULL) == pdPASS
+            ? ESP_OK : ESP_ERR_NO_MEM
+    );
 
     ESP_LOGI(TAG, "Codex Remote ready: %dx%d, GPIO18 enabled", BSP_LCD_H_RES, BSP_LCD_V_RES);
 }

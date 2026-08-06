@@ -16,6 +16,16 @@ static void read_source(const char *path, char *buffer, size_t capacity)
     fclose(file);
 }
 
+static void read_prefix(const char *path, char *buffer, size_t capacity)
+{
+    FILE *file = fopen(path, "rb");
+    assert(file != NULL);
+    size_t length = fread(buffer, 1, capacity - 1, file);
+    assert(!ferror(file));
+    buffer[length] = '\0';
+    fclose(file);
+}
+
 int main(void)
 {
     assert(CR_DISPLAY_WIDTH == 480);
@@ -45,7 +55,7 @@ int main(void)
     assert(strstr(ui_source, "LV_EVENT_PRESSED") != NULL);
     assert(strstr(ui_source, "LV_EVENT_RELEASED") != NULL);
     assert(strstr(ui_source, "LV_EVENT_GESTURE") == NULL);
-    assert(strstr(ui_source, "lv_font_source_han_sans_sc_16_cjk") != NULL);
+    assert(strstr(ui_source, "codex_remote_font_16") != NULL);
     assert(strstr(ui_source, "card->dot") == NULL);
     assert(strstr(ui_source, "state_background_color") != NULL);
     assert(strstr(ui_source, "state_border_color") != NULL);
@@ -59,6 +69,20 @@ int main(void)
     assert(strstr(ui_source, "快捷键 >") != NULL);
     assert(strstr(ui_source, "< 状态") != NULL);
     assert(strstr(ui_source, "确认  ENTER") != NULL);
+
+    char font_source[32768];
+    read_prefix(
+        "firmware/components/codex_remote_ui/src/codex_remote_font_16.c",
+        font_source,
+        sizeof(font_source)
+    );
+    const char *required_glyphs[] = {
+        "处", "态", "捷", "确", "离", "线", "认",
+        "误", "输", "连", "错", "键", "闲",
+    };
+    for (size_t index = 0; index < sizeof(required_glyphs) / sizeof(required_glyphs[0]); index++) {
+        assert(strstr(font_source, required_glyphs[index]) != NULL);
+    }
     assert(strstr(ui_source, "LV_SYMBOL_UP") != NULL);
     assert(strstr(ui_source, "LV_SYMBOL_DOWN") != NULL);
     assert(strstr(ui_source, "LV_SYMBOL_LEFT") != NULL);
@@ -73,6 +97,6 @@ int main(void)
 
     char sdkconfig_defaults[8192];
     read_source("firmware/sdkconfig.defaults", sdkconfig_defaults, sizeof(sdkconfig_defaults));
-    assert(strstr(sdkconfig_defaults, "CONFIG_LV_FONT_SOURCE_HAN_SANS_SC_16_CJK=y") != NULL);
+    assert(strstr(sdkconfig_defaults, "CONFIG_LV_FONT_SOURCE_HAN_SANS_SC_16_CJK=y") == NULL);
     return 0;
 }

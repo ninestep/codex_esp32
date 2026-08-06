@@ -2,7 +2,7 @@
 
 #include "lvgl.h"
 
-LV_FONT_DECLARE(lv_font_source_han_sans_sc_16_cjk);
+LV_FONT_DECLARE(codex_remote_font_16);
 
 typedef struct {
     lv_obj_t *card;
@@ -205,7 +205,7 @@ void cr_ui_init(const cr_ui_callbacks_t *config)
     lv_obj_t *screen = lv_screen_active();
     lv_obj_set_style_bg_color(screen, lv_color_hex(0x09090b), 0);
     lv_obj_set_style_text_color(screen, lv_color_hex(0xfafafa), 0);
-    lv_obj_set_style_text_font(screen, &lv_font_source_han_sans_sc_16_cjk, 0);
+    lv_obj_set_style_text_font(screen, &codex_remote_font_16, 0);
 
     home_page = lv_obj_create(screen);
     lv_obj_remove_style_all(home_page);

@@ -5,6 +5,23 @@ import XCTest
 
 @MainActor
 final class BlackHoleAudioInputBridgeTests: XCTestCase {
+    func testBeginChangesDefaultInputBeforeStartingBlackHoleEngine() throws {
+        var operations: [String] = []
+        let bridge = BlackHoleAudioInputBridge(
+            hotkeyText: "⌥Space",
+            hotkeyMode: .hold,
+            blackHoleDeviceID: 11,
+            originalInputDeviceID: 22,
+            emitter: RecordingBlackHoleHotkeyEmitter(isAuthorized: true),
+            setDefaultInputDeviceIDOperation: { _ in operations.append("default-input") },
+            configureEngineOperation: { _ in operations.append("engine") }
+        )
+
+        try bridge.begin(firstAudioSequence: 1)
+
+        XCTAssertEqual(operations, ["default-input", "engine"])
+    }
+
     func testPlaybackPipelineUsesMixerCompatibleFloatSamples() throws {
         let macosRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -19,6 +36,26 @@ final class BlackHoleAudioInputBridgeTests: XCTestCase {
         XCTAssertTrue(source.contains("floatChannelData?[0]"))
         XCTAssertTrue(source.contains("Float(sample) / Float(Int16.max)"))
         XCTAssertFalse(source.contains("commonFormat: .pcmFormatInt16"))
+    }
+
+    func testPlaybackPipelineBindsBlackHoleBeforeUsingItsNativeOutputFormat() throws {
+        let macosRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let sourceURL = macosRoot.appendingPathComponent(
+            "Sources/CodexRemoteMac/Audio/BlackHoleAudioInputBridge.swift"
+        )
+        let source = try String(contentsOf: sourceURL, encoding: .utf8)
+
+        let outputNode = try XCTUnwrap(source.range(of: "let outputNode = engine.outputNode"))
+        let bindDevice = try XCTUnwrap(source.range(of: "let status = AudioUnitSetProperty("))
+        let nativeFormat = try XCTUnwrap(source.range(of: "outputNode.inputFormat(forBus: 0)"))
+        let connectOutput = try XCTUnwrap(source.range(of: "engine.connect(engine.mainMixerNode, to: outputNode, format: outputFormat)"))
+
+        XCTAssertLessThan(outputNode.lowerBound, bindDevice.lowerBound)
+        XCTAssertLessThan(bindDevice.lowerBound, nativeFormat.lowerBound)
+        XCTAssertLessThan(nativeFormat.lowerBound, connectOutput.lowerBound)
     }
 
     func testHoldEndRecoversWhenKeyUpFailsAfterSuccessfulBeginKeyDown() async throws {
