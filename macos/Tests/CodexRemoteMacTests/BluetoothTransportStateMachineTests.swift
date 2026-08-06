@@ -40,7 +40,7 @@ final class BluetoothTransportStateMachineTests: XCTestCase {
         XCTAssertEqual(machine.handle(.characteristicsDiscovered(Set(BluetoothCharacteristic.allCases))), [
             .subscribe(.controlToHost),
             .subscribe(.audioToHost),
-            .subscribe(.deviceInfo),
+            .resetSubscription(.deviceInfo),
             .connectionReady,
         ])
         XCTAssertEqual(machine.state, .ready(id: "device-1"))

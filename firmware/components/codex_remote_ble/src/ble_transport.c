@@ -6,6 +6,10 @@
 #include "codex_remote/message.h"
 #include "esp_check.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
+#include "freertos/semphr.h"
+#include "freertos/task.h"
 #include "host/ble_hs.h"
 #include "host/ble_uuid.h"
 #include "host/util/util.h"
@@ -21,6 +25,8 @@
 #define CR_ENCODED_BYTES ((size_t)4096)
 #define CR_DEVICE_CAPABILITIES UINT16_C(0x000f)
 #define CR_BLE_NO_CONNECTION UINT16_MAX
+
+void ble_store_config_init(void);
 
 static const char *TAG = "codex_remote_ble";
 
@@ -57,6 +63,13 @@ static uint32_t next_request_id = 1;
 static uint32_t next_scroll_sequence = 1;
 static uint32_t pending_select_request;
 static uint16_t pending_select_key;
+static uint8_t tx_payload[CR_ENCODED_BYTES];
+static uint8_t tx_envelope[CR_ENCODED_BYTES + CR_ENVELOPE_FIXED_OVERHEAD];
+static StaticSemaphore_t tx_lock_storage;
+static SemaphoreHandle_t tx_lock;
+static StaticQueue_t device_info_queue_storage;
+static uint8_t device_info_queue_buffer[sizeof(uint16_t)];
+static QueueHandle_t device_info_queue;
 
 static void advertise(void);
 
@@ -67,10 +80,16 @@ static void publish_state(void)
     }
 }
 
-static int notify_fragmented(uint16_t value_handle, bool indicate, const uint8_t *message, size_t length)
+static int notify_fragmented(
+    uint16_t conn_handle,
+    uint16_t value_handle,
+    bool indicate,
+    const uint8_t *message,
+    size_t length
+)
 {
-    if (connection_handle == CR_BLE_NO_CONNECTION) return BLE_HS_ENOTCONN;
-    uint16_t mtu = ble_att_mtu(connection_handle);
+    if (conn_handle == CR_BLE_NO_CONNECTION) return BLE_HS_ENOTCONN;
+    uint16_t mtu = ble_att_mtu(conn_handle);
     if (mtu <= CR_FRAGMENT_HEADER_BYTES + 3) return BLE_HS_EMSGSIZE;
     size_t packet_limit = (size_t)mtu - 3;
     size_t payload_limit = packet_limit - CR_FRAGMENT_HEADER_BYTES;
@@ -96,36 +115,53 @@ static int notify_fragmented(uint16_t value_handle, bool indicate, const uint8_t
             return rc;
         }
         rc = indicate
-            ? ble_gatts_indicate_custom(connection_handle, value_handle, packet)
-            : ble_gatts_notify_custom(connection_handle, value_handle, packet);
+            ? ble_gatts_indicate_custom(conn_handle, value_handle, packet)
+            : ble_gatts_notify_custom(conn_handle, value_handle, packet);
         if (rc != 0) return rc;
     }
     return 0;
 }
 
-static int send_message(const cr_message_t *message, uint16_t value_handle, bool indicate)
+static int send_message_on_connection(
+    const cr_message_t *message,
+    uint16_t value_handle,
+    bool indicate,
+    uint16_t conn_handle
+)
 {
-    uint8_t payload[CR_ENCODED_BYTES];
-    uint8_t envelope_bytes[CR_ENCODED_BYTES + CR_ENVELOPE_FIXED_OVERHEAD];
+    xSemaphoreTake(tx_lock, portMAX_DELAY);
     size_t payload_length = 0;
-    cr_result_t result = cr_message_encode(message, payload, sizeof(payload), &payload_length);
-    if (result != CR_OK) return BLE_HS_EAPP;
+    cr_result_t result = cr_message_encode(message, tx_payload, sizeof(tx_payload), &payload_length);
+    if (result != CR_OK) {
+        xSemaphoreGive(tx_lock);
+        return BLE_HS_EAPP;
+    }
     cr_envelope_view_t envelope = {
         .version_major = CR_PROTOCOL_MAJOR,
         .version_minor = CR_PROTOCOL_MINOR,
         .type = message->type,
         .flags = 0,
         .sequence = next_envelope_sequence++,
-        .payload = payload,
+        .payload = tx_payload,
         .payload_length = payload_length,
     };
     size_t envelope_length = 0;
-    result = cr_envelope_encode(&envelope, envelope_bytes, sizeof(envelope_bytes), &envelope_length);
-    if (result != CR_OK) return BLE_HS_EAPP;
-    return notify_fragmented(value_handle, indicate, envelope_bytes, envelope_length);
+    result = cr_envelope_encode(&envelope, tx_envelope, sizeof(tx_envelope), &envelope_length);
+    if (result != CR_OK) {
+        xSemaphoreGive(tx_lock);
+        return BLE_HS_EAPP;
+    }
+    int rc = notify_fragmented(conn_handle, value_handle, indicate, tx_envelope, envelope_length);
+    xSemaphoreGive(tx_lock);
+    return rc;
 }
 
-static int send_device_info(void)
+static int send_message(const cr_message_t *message, uint16_t value_handle, bool indicate)
+{
+    return send_message_on_connection(message, value_handle, indicate, connection_handle);
+}
+
+static int send_device_info(uint16_t conn_handle)
 {
     static const uint8_t firmware[] = "0.1.0";
     cr_message_t message = {
@@ -138,7 +174,27 @@ static int send_device_info(void)
             .battery_percent = 100,
         },
     };
-    return send_message(&message, device_info_handle, false);
+    return send_message_on_connection(&message, device_info_handle, false, conn_handle);
+}
+
+static void queue_device_info(uint16_t conn_handle)
+{
+    xQueueOverwrite(device_info_queue, &conn_handle);
+}
+
+static void device_info_task(void *context)
+{
+    (void)context;
+    uint16_t conn_handle;
+    while (true) {
+        if (xQueueReceive(device_info_queue, &conn_handle, portMAX_DELAY) != pdTRUE) continue;
+        int rc = send_device_info(conn_handle);
+        if (rc != 0) {
+            ESP_LOGW(TAG, "device info notify failed: %d", rc);
+        } else {
+            ESP_LOGI(TAG, "device info sent on connection %u", (unsigned)conn_handle);
+        }
+    }
 }
 
 static void handle_complete_message(cr_byte_view_t complete)
@@ -238,8 +294,7 @@ static int gap_event(struct ble_gap_event *event, void *arg)
         return 0;
     case BLE_GAP_EVENT_SUBSCRIBE:
         if (event->subscribe.attr_handle == device_info_handle && event->subscribe.cur_notify) {
-            int rc = send_device_info();
-            if (rc != 0) ESP_LOGW(TAG, "device info notify failed: %d", rc);
+            queue_device_info(event->subscribe.conn_handle);
         }
         return 0;
     case BLE_GAP_EVENT_REPEAT_PAIRING: {
@@ -313,6 +368,7 @@ static void host_task(void *param)
 esp_err_t cr_ble_start(cr_device_state_t *state, const cr_ble_config_t *config)
 {
     ESP_RETURN_ON_FALSE(state != NULL && config != NULL, ESP_ERR_INVALID_ARG, TAG, "invalid config");
+    tx_lock = xSemaphoreCreateMutexStatic(&tx_lock_storage);
     device_state = state;
     callbacks = *config;
     cr_fragment_reassembler_init(&control_reassembler, control_storage, sizeof(control_storage));
@@ -326,11 +382,28 @@ esp_err_t cr_ble_start(cr_device_state_t *state, const cr_ble_config_t *config)
     ble_hs_cfg.sm_sc = 1;
     ble_hs_cfg.sm_our_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
     ble_hs_cfg.sm_their_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
+    ble_hs_cfg.store_status_cb = ble_store_util_status_rr;
+    ble_store_config_init();
     ble_svc_gap_init();
     ble_svc_gatt_init();
     ESP_RETURN_ON_FALSE(ble_svc_gap_device_name_set("Codex Remote") == 0, ESP_FAIL, TAG, "name failed");
     ESP_RETURN_ON_FALSE(ble_gatts_count_cfg(services) == 0, ESP_FAIL, TAG, "GATT count failed");
     ESP_RETURN_ON_FALSE(ble_gatts_add_svcs(services) == 0, ESP_FAIL, TAG, "GATT add failed");
+    device_info_queue = xQueueCreateStatic(
+        1,
+        sizeof(uint16_t),
+        device_info_queue_buffer,
+        &device_info_queue_storage
+    );
+    ESP_RETURN_ON_FALSE(device_info_queue != NULL, ESP_ERR_NO_MEM, TAG, "device info queue failed");
+    ESP_RETURN_ON_FALSE(
+        xTaskCreatePinnedToCore(
+            device_info_task, "device_info", 4096, NULL, 5, NULL, NIMBLE_CORE
+        ) == pdPASS,
+        ESP_ERR_NO_MEM,
+        TAG,
+        "device info task failed"
+    );
     nimble_port_freertos_init(host_task);
     return ESP_OK;
 }

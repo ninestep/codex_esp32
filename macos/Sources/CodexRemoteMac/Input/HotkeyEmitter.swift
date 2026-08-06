@@ -3,8 +3,10 @@ import Foundation
 
 public struct ParsedHotkey: Equatable, Sendable {
     public let keyCode: CGKeyCode
-    public let flags: CGEventFlags
+    public let keyDownFlags: CGEventFlags
+    public let keyUpFlags: CGEventFlags
     public let displayValue: String
+    public let requiresHoldMode: Bool
 }
 
 public enum HotkeyParseError: Error, Equatable, Sendable {
@@ -13,6 +15,7 @@ public enum HotkeyParseError: Error, Equatable, Sendable {
     case missingKey
     case multipleKeys
     case duplicateModifier(String)
+    case functionKeyMustBeStandalone
     case unknownToken(String)
 }
 
@@ -26,6 +29,19 @@ public struct HotkeyParser: Sendable {
     public func parseRequired(_ value: String) throws -> ParsedHotkey {
         let tokens = tokenize(value)
         guard !tokens.isEmpty else { throw HotkeyParseError.empty }
+        let compactValue = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if compactValue.contains("fn") {
+            guard compactValue == "fn" else {
+                throw HotkeyParseError.functionKeyMustBeStandalone
+            }
+            return ParsedHotkey(
+                keyCode: 0x3F,
+                keyDownFlags: .maskSecondaryFn,
+                keyUpFlags: [],
+                displayValue: "Fn",
+                requiresHoldMode: true
+            )
+        }
 
         var flags: CGEventFlags = []
         var modifierDisplays = Set<String>()
@@ -56,8 +72,10 @@ public struct HotkeyParser: Sendable {
         let displayModifiers = ["⌘", "⌥", "⌃", "⇧"].filter { modifierDisplays.contains($0) }.joined()
         return ParsedHotkey(
             keyCode: mainKey.code,
-            flags: flags,
-            displayValue: "\(displayModifiers)\(mainKey.display)"
+            keyDownFlags: flags,
+            keyUpFlags: flags,
+            displayValue: "\(displayModifiers)\(mainKey.display)",
+            requiresHoldMode: false
         )
     }
 
@@ -165,8 +183,13 @@ public final class CGEventHotkeyEmitter: HotkeyEmitting {
 
     public var isAuthorized: Bool { AXIsProcessTrusted() }
 
-    public func keyDown(_ hotkey: ParsedHotkey) throws { try post(hotkey, down: true) }
-    public func keyUp(_ hotkey: ParsedHotkey) throws { try post(hotkey, down: false) }
+    public func keyDown(_ hotkey: ParsedHotkey) throws {
+        try post(hotkey, down: true, flags: hotkey.keyDownFlags)
+    }
+
+    public func keyUp(_ hotkey: ParsedHotkey) throws {
+        try post(hotkey, down: false, flags: hotkey.keyUpFlags)
+    }
     public func recoverAfterKeyUpFailure(_ hotkey: ParsedHotkey) {
         guard let event = CGEvent(keyboardEventSource: nil, virtualKey: hotkey.keyCode, keyDown: false) else {
             return
@@ -175,12 +198,12 @@ public final class CGEventHotkeyEmitter: HotkeyEmitting {
         event.post(tap: .cghidEventTap)
     }
 
-    private func post(_ hotkey: ParsedHotkey, down: Bool) throws {
+    private func post(_ hotkey: ParsedHotkey, down: Bool, flags: CGEventFlags) throws {
         guard isAuthorized else { throw AudioInputBridgeError.accessibilityNotGranted }
         guard let event = CGEvent(keyboardEventSource: nil, virtualKey: hotkey.keyCode, keyDown: down) else {
             throw AudioInputBridgeError.audioSystemFailure
         }
-        event.flags = hotkey.flags
+        event.flags = flags
         event.post(tap: .cghidEventTap)
     }
 }

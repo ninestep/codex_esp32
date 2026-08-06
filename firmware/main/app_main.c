@@ -15,6 +15,7 @@
 #include "esp_lv_adapter.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
 #include "freertos/task.h"
 #include "nvs_flash.h"
 
@@ -27,6 +28,10 @@ static cr_power_state_t power_state;
 static cr_power_mode_t current_power_mode;
 static portMUX_TYPE power_lock = portMUX_INITIALIZER_UNLOCKED;
 static uint32_t pending_first_audio_sequence;
+static QueueHandle_t ui_state_queue;
+static StaticQueue_t ui_state_queue_storage;
+static uint8_t ui_state_queue_buffer[sizeof(cr_device_state_t)];
+static cr_device_state_t ui_state_snapshot;
 
 static uint64_t now_ms(void)
 {
@@ -78,20 +83,29 @@ static void ui_key(uint16_t session_key, uint8_t key, void *context)
 static void ble_state_changed(const cr_device_state_t *state, void *context)
 {
     (void)context;
-    for (size_t index = 0; index < state->session_count; index++) {
-        if (state->sessions[index].state == 3 || state->sessions[index].state == 4) {
+    xQueueOverwrite(ui_state_queue, state);
+}
+
+static void ui_state_task(void *context)
+{
+    (void)context;
+    while (true) {
+        if (xQueueReceive(ui_state_queue, &ui_state_snapshot, portMAX_DELAY) != pdTRUE) continue;
+        for (size_t index = 0; index < ui_state_snapshot.session_count; index++) {
+            if (ui_state_snapshot.sessions[index].state != 3
+                && ui_state_snapshot.sessions[index].state != 4) continue;
             portENTER_CRITICAL(&power_lock);
             cr_power_note_urgent(&power_state, now_ms());
             portEXIT_CRITICAL(&power_lock);
             break;
         }
+        if (esp_lv_adapter_lock(200) != ESP_OK) {
+            ESP_LOGW(TAG, "display busy while applying BLE state");
+            continue;
+        }
+        cr_ui_update(&ui_state_snapshot);
+        esp_lv_adapter_unlock();
     }
-    if (esp_lv_adapter_lock(200) != ESP_OK) {
-        ESP_LOGW(TAG, "display busy while applying BLE state");
-        return;
-    }
-    cr_ui_update(state);
-    esp_lv_adapter_unlock();
 }
 
 static void execute_input_action(cr_input_action_t action)
@@ -206,7 +220,6 @@ void app_main(void)
         ESP_LOGE(TAG, "failed to initialize Waveshare display");
         return;
     }
-    ESP_ERROR_CHECK(bsp_display_backlight_on());
     ESP_ERROR_CHECK(esp_lv_adapter_lock(200));
     cr_ui_callbacks_t ui_callbacks = {
         .select_session = ui_select,
@@ -217,6 +230,18 @@ void app_main(void)
     cr_ui_init(&ui_callbacks);
     cr_ui_update(&device_state);
     esp_lv_adapter_unlock();
+
+    ui_state_queue = xQueueCreateStatic(
+        1,
+        sizeof(cr_device_state_t),
+        ui_state_queue_buffer,
+        &ui_state_queue_storage
+    );
+    configASSERT(ui_state_queue != NULL);
+    ESP_ERROR_CHECK(
+        xTaskCreate(ui_state_task, "ui_state", 4096, NULL, 5, NULL) == pdPASS
+            ? ESP_OK : ESP_ERR_NO_MEM
+    );
 
     gpio_config_t button_config = {
         .pin_bit_mask = UINT64_C(1) << USER_BUTTON_GPIO,

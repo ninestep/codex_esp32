@@ -18,8 +18,8 @@ public enum HotkeyTestResult: Equatable, Sendable {
 
     public var message: String {
         switch self {
-        case .eventSent:
-            return "按键事件已发送"
+        case .eventSent(let displayValue):
+            return displayValue == "Fn" ? "Fn 按住事件已发送" : "按键事件已发送"
         }
     }
 }
@@ -81,6 +81,19 @@ public final class HotkeyTester {
             try emitter.keyDown(hotkey)
         } catch {
             throw HotkeyTestError.sendFailed
+        }
+
+        if hotkey.requiresHoldMode {
+            do {
+                try await clock.sleep(seconds: 1)
+            } catch {
+                do {
+                    try emitter.keyUp(hotkey)
+                } catch {
+                    emitter.recoverAfterKeyUpFailure(hotkey)
+                }
+                throw error
+            }
         }
 
         do {

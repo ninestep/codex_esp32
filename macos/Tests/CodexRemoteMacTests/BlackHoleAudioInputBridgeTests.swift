@@ -5,6 +5,22 @@ import XCTest
 
 @MainActor
 final class BlackHoleAudioInputBridgeTests: XCTestCase {
+    func testPlaybackPipelineUsesMixerCompatibleFloatSamples() throws {
+        let macosRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let sourceURL = macosRoot.appendingPathComponent(
+            "Sources/CodexRemoteMac/Audio/BlackHoleAudioInputBridge.swift"
+        )
+        let source = try String(contentsOf: sourceURL, encoding: .utf8)
+
+        XCTAssertTrue(source.contains("commonFormat: .pcmFormatFloat32"))
+        XCTAssertTrue(source.contains("floatChannelData?[0]"))
+        XCTAssertTrue(source.contains("Float(sample) / Float(Int16.max)"))
+        XCTAssertFalse(source.contains("commonFormat: .pcmFormatInt16"))
+    }
+
     func testHoldEndRecoversWhenKeyUpFailsAfterSuccessfulBeginKeyDown() async throws {
         let emitter = RecordingBlackHoleHotkeyEmitter(isAuthorized: true, failUpAttempts: 1)
         let bridge = makeBridge(mode: .hold, emitter: emitter)
@@ -18,8 +34,8 @@ final class BlackHoleAudioInputBridgeTests: XCTestCase {
         }
 
         XCTAssertEqual(emitter.events, [
-            .down(49),
-            .up(49),
+            .down(49, .maskAlternate),
+            .up(49, .maskAlternate),
             .recovery(49),
         ])
     }
@@ -32,8 +48,8 @@ final class BlackHoleAudioInputBridgeTests: XCTestCase {
         bridge.abort()
 
         XCTAssertEqual(emitter.events, [
-            .down(49),
-            .up(49),
+            .down(49, .maskAlternate),
+            .up(49, .maskAlternate),
             .recovery(49),
         ])
     }
@@ -47,8 +63,8 @@ final class BlackHoleAudioInputBridgeTests: XCTestCase {
         }
 
         XCTAssertEqual(emitter.events, [
-            .down(49),
-            .up(49),
+            .down(49, .maskAlternate),
+            .up(49, .maskAlternate),
             .recovery(49),
         ])
     }
@@ -66,10 +82,10 @@ final class BlackHoleAudioInputBridgeTests: XCTestCase {
         }
 
         XCTAssertEqual(emitter.events, [
-            .down(49),
-            .up(49),
-            .down(49),
-            .up(49),
+            .down(49, .maskAlternate),
+            .up(49, .maskAlternate),
+            .down(49, .maskAlternate),
+            .up(49, .maskAlternate),
             .recovery(49),
         ])
     }
@@ -82,8 +98,27 @@ final class BlackHoleAudioInputBridgeTests: XCTestCase {
         try await bridge.end(lastAudioSequence: 1)
 
         XCTAssertEqual(emitter.events, [
-            .down(49),
-            .up(49),
+            .down(49, .maskAlternate),
+            .up(49, .maskAlternate),
+        ])
+    }
+
+    func testFunctionKeyHoldUsesSecondaryFnOnlyWhilePressed() async throws {
+        let emitter = RecordingBlackHoleHotkeyEmitter(isAuthorized: true)
+        let bridge = BlackHoleAudioInputBridge(
+            hotkeyText: "Fn",
+            hotkeyMode: .hold,
+            blackHoleDeviceID: 11,
+            originalInputDeviceID: 22,
+            emitter: emitter
+        )
+
+        try bridge.begin(firstAudioSequence: 1)
+        try await bridge.end(lastAudioSequence: 1)
+
+        XCTAssertEqual(emitter.events, [
+            .down(0x3F, .maskSecondaryFn),
+            .up(0x3F, []),
         ])
     }
 
@@ -104,8 +139,8 @@ final class BlackHoleAudioInputBridgeTests: XCTestCase {
 @MainActor
 private final class RecordingBlackHoleHotkeyEmitter: HotkeyEmitting {
     enum Event: Equatable {
-        case down(CGKeyCode)
-        case up(CGKeyCode)
+        case down(CGKeyCode, CGEventFlags)
+        case up(CGKeyCode, CGEventFlags)
         case recovery(CGKeyCode)
     }
 
@@ -121,11 +156,11 @@ private final class RecordingBlackHoleHotkeyEmitter: HotkeyEmitting {
     }
 
     func keyDown(_ hotkey: ParsedHotkey) {
-        events.append(.down(hotkey.keyCode))
+        events.append(.down(hotkey.keyCode, hotkey.keyDownFlags))
     }
 
     func keyUp(_ hotkey: ParsedHotkey) throws {
-        events.append(.up(hotkey.keyCode))
+        events.append(.up(hotkey.keyCode, hotkey.keyUpFlags))
         if remainingSuccessfulUpsBeforeFailure > 0 {
             remainingSuccessfulUpsBeforeFailure -= 1
             return

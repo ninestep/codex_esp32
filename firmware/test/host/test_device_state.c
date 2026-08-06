@@ -78,6 +78,24 @@ static void test_delta_requires_current_generation_and_sequence(void)
     assert(cr_device_apply_message(&state, &delta) == CR_DEVICE_RESYNC_STALE_GENERATION);
 }
 
+static void test_invalid_snapshot_does_not_partially_replace_state(void)
+{
+    cr_device_state_t state;
+    cr_device_state_init(&state);
+    cr_message_t initial = snapshot(7);
+    assert(cr_device_apply_message(&state, &initial) == CR_DEVICE_APPLIED);
+
+    cr_message_t invalid = snapshot(8);
+    invalid.body.state_snapshot.sessions[0] = session(3, 2);
+    invalid.body.state_snapshot.sessions[1] = session(4, 6);
+
+    assert(cr_device_apply_message(&state, &invalid) == CR_DEVICE_INVALID_MESSAGE);
+    assert(state.generation == 7);
+    assert(state.session_count == 2);
+    assert(state.sessions[0].session_key == 1);
+    assert(state.sessions[1].session_key == 2);
+}
+
 static void test_selection_and_request_deduplication(void)
 {
     cr_device_state_t state;
@@ -121,6 +139,7 @@ int main(void)
 {
     test_snapshot_is_required_before_delta();
     test_delta_requires_current_generation_and_sequence();
+    test_invalid_snapshot_does_not_partially_replace_state();
     test_selection_and_request_deduplication();
     test_disconnect_clears_connection_scoped_state();
     puts("test_device_state: PASS");

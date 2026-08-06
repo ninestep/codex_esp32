@@ -57,7 +57,16 @@ public struct AppSettings: Codable, Equatable, Sendable {
     }
 
     public mutating func normalizeDoubaoHotkey() throws {
-        doubaoHotkey = try normalizedDoubaoHotkey()
+        let parsed = try parsedDoubaoHotkey()
+        doubaoHotkey = parsed?.displayValue ?? ""
+        if parsed?.requiresHoldMode == true {
+            hotkeyMode = .hold
+        }
+    }
+
+    public mutating func selectDoubaoFunctionKey() {
+        doubaoHotkey = "Fn"
+        hotkeyMode = .hold
     }
 
     public var wasCurrentHotkeyTested: Bool {
@@ -74,9 +83,13 @@ public struct AppSettings: Codable, Equatable, Sendable {
     }
 
     public func normalizedDoubaoHotkey() throws -> String {
+        try parsedDoubaoHotkey()?.displayValue ?? ""
+    }
+
+    private func parsedDoubaoHotkey() throws -> ParsedHotkey? {
         let trimmed = doubaoHotkey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return "" }
-        return try HotkeyParser().parseRequired(trimmed).displayValue
+        guard !trimmed.isEmpty else { return nil }
+        return try HotkeyParser().parseRequired(trimmed)
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -105,6 +118,9 @@ public struct AppSettings: Codable, Equatable, Sendable {
         } else {
             hotkeyMode = .hold
         }
+        if HotkeyParser().parse(doubaoHotkey)?.requiresHoldMode == true {
+            hotkeyMode = .hold
+        }
         let decodedTestedHotkey = try? container.decode(String.self, forKey: .lastTestedDoubaoHotkey)
         lastTestedDoubaoHotkey = decodedTestedHotkey.flatMap { HotkeyParser().parse($0)?.displayValue }
     }
@@ -113,8 +129,12 @@ public struct AppSettings: Codable, Equatable, Sendable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(socketPath, forKey: .socketPath)
         try container.encode(automaticBLEReconnect, forKey: .automaticBLEReconnect)
-        try container.encode(normalizedDoubaoHotkey(), forKey: .doubaoHotkey)
-        try container.encode(hotkeyMode, forKey: .hotkeyMode)
+        let normalizedHotkey = try normalizedDoubaoHotkey()
+        try container.encode(normalizedHotkey, forKey: .doubaoHotkey)
+        let encodedMode: HotkeyTriggerMode = HotkeyParser().parse(normalizedHotkey)?.requiresHoldMode == true
+            ? .hold
+            : hotkeyMode
+        try container.encode(encodedMode, forKey: .hotkeyMode)
         try container.encodeIfPresent(lastTestedDoubaoHotkey, forKey: .lastTestedDoubaoHotkey)
     }
 }

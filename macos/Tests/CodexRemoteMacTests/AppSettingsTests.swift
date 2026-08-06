@@ -64,6 +64,26 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(decoded.hotkeyMode, .toggle)
     }
 
+    func testFunctionKeyNormalizesAndForcesHoldMode() throws {
+        var settings = AppSettings(
+            socketPath: "/tmp/custom.sock",
+            automaticBLEReconnect: true,
+            doubaoHotkey: "fn",
+            hotkeyMode: .toggle
+        )
+
+        try settings.normalizeDoubaoHotkey()
+
+        XCTAssertEqual(settings.doubaoHotkey, "Fn")
+        XCTAssertEqual(settings.hotkeyMode, .hold)
+
+        settings.doubaoHotkey = "⌥Space"
+        settings.hotkeyMode = .toggle
+        settings.selectDoubaoFunctionKey()
+        XCTAssertEqual(settings.doubaoHotkey, "Fn")
+        XCTAssertEqual(settings.hotkeyMode, .hold)
+    }
+
     func testDecodingInvalidHotkeyModeFallsBackWithoutDroppingOtherFields() throws {
         let invalidString = Data("""
         {

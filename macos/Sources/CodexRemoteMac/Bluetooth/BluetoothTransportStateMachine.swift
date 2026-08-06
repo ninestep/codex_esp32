@@ -41,6 +41,7 @@ public enum BluetoothTransportAction: Equatable, Sendable {
     case discoverService
     case discoverCharacteristics
     case subscribe(BluetoothCharacteristic)
+    case resetSubscription(BluetoothCharacteristic)
     case connectionReady
 }
 
@@ -86,7 +87,7 @@ public struct BluetoothTransportStateMachine: Sendable {
             return [
                 .subscribe(.controlToHost),
                 .subscribe(.audioToHost),
-                .subscribe(.deviceInfo),
+                .resetSubscription(.deviceInfo),
                 .connectionReady,
             ]
 

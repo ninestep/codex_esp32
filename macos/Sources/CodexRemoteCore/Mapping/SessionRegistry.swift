@@ -28,8 +28,13 @@ public actor SessionRegistry {
         if remoteIDByLauncher[launcherInstanceID] != nil {
             throw SessionRegistryError.duplicateLauncher(launcherInstanceID)
         }
-        if remoteIDByTerminal[terminalTargetID] != nil {
-            throw SessionRegistryError.terminalAlreadyBound(terminalTargetID)
+        if let previousRemoteID = remoteIDByTerminal[terminalTargetID],
+           let previousSession = sessionsByRemoteID.removeValue(forKey: previousRemoteID) {
+            remoteIDByLauncher.removeValue(forKey: previousSession.launcherInstanceID)
+            remoteIDByTerminal.removeValue(forKey: previousSession.terminalTargetID)
+            if let providerSessionID = previousSession.providerSessionID {
+                remoteIDByProvider.removeValue(forKey: providerSessionID)
+            }
         }
 
         let remoteSessionID = idGenerator()

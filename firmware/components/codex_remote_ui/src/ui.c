@@ -83,15 +83,23 @@ static void key_clicked(lv_event_t *event)
     actions.terminal_key(selected_session_key, (uint8_t)key, actions.context);
 }
 
-static void detail_gesture(lv_event_t *event)
+static int32_t detail_press_y;
+
+static void detail_pointer(lv_event_t *event)
 {
-    (void)event;
+    lv_point_t point;
+    lv_indev_get_point(lv_indev_active(), &point);
+    if (lv_event_get_code(event) == LV_EVENT_PRESSED) {
+        detail_press_y = point.y;
+        return;
+    }
+
     note_interaction();
     if (interaction_locked) return;
     if (actions.scroll == NULL || selected_session_key == 0) return;
-    lv_dir_t direction = lv_indev_get_gesture_dir(lv_indev_active());
-    if (direction == LV_DIR_TOP) actions.scroll(selected_session_key, 120, actions.context);
-    else if (direction == LV_DIR_BOTTOM) actions.scroll(selected_session_key, -120, actions.context);
+    int32_t delta_y = point.y - detail_press_y;
+    if (delta_y < -24) actions.scroll(selected_session_key, 120, actions.context);
+    else if (delta_y > 24) actions.scroll(selected_session_key, -120, actions.context);
 }
 
 static lv_obj_t *make_button(lv_obj_t *parent, const char *text)
@@ -196,7 +204,8 @@ void cr_ui_init(const cr_ui_callbacks_t *config)
     lv_obj_align(gesture, LV_ALIGN_CENTER, 0, -10);
     lv_obj_set_style_bg_color(gesture, lv_color_hex(0x18181b), 0);
     lv_obj_set_style_radius(gesture, 18, 0);
-    lv_obj_add_event_cb(gesture, detail_gesture, LV_EVENT_GESTURE, NULL);
+    lv_obj_add_event_cb(gesture, detail_pointer, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(gesture, detail_pointer, LV_EVENT_RELEASED, NULL);
     detail_status = lv_label_create(gesture);
     lv_obj_set_width(detail_status, 410);
     lv_label_set_long_mode(detail_status, LV_LABEL_LONG_WRAP);

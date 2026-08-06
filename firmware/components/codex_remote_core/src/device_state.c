@@ -2,35 +2,36 @@
 
 #include <string.h>
 
-static bool copy_text(char *destination, size_t capacity, cr_byte_view_t source)
+static bool text_is_valid(size_t capacity, cr_byte_view_t source)
 {
-    if (source.length >= capacity || (source.length > 0 && source.bytes == NULL)) return false;
-    if (source.length > 0) memcpy(destination, source.bytes, source.length);
-    destination[source.length] = '\0';
-    return true;
+    return source.length < capacity && (source.length == 0 || source.bytes != NULL);
 }
 
-static bool copy_session(cr_device_session_t *destination, const cr_session_view_t *source)
+static bool session_is_valid(const cr_session_view_t *session)
 {
-    if (source->state > 5) return false;
-    cr_device_session_t session = {
-        .session_key = source->session_key,
-        .state = source->state,
-        .unread = source->unread,
-        .capabilities = source->capabilities,
-        .updated_at_milliseconds = source->updated_at_milliseconds,
-    };
-    if (!copy_text(session.display_title, sizeof(session.display_title), source->display_title)
-        || !copy_text(
-            session.working_directory_label,
-            sizeof(session.working_directory_label),
-            source->working_directory_label
-        )
-        || !copy_text(session.status_detail, sizeof(session.status_detail), source->status_detail)) {
-        return false;
-    }
-    *destination = session;
-    return true;
+    return session->state <= 5
+        && text_is_valid(CR_MAX_TITLE_BYTES + 1, session->display_title)
+        && text_is_valid(CR_MAX_TITLE_BYTES + 1, session->working_directory_label)
+        && text_is_valid(CR_MAX_DETAIL_BYTES + 1, session->status_detail);
+}
+
+static void copy_text(char *destination, cr_byte_view_t source)
+{
+    if (source.length > 0) memcpy(destination, source.bytes, source.length);
+    destination[source.length] = '\0';
+}
+
+static void copy_session(cr_device_session_t *destination, const cr_session_view_t *source)
+{
+    memset(destination, 0, sizeof(*destination));
+    destination->session_key = source->session_key;
+    destination->state = source->state;
+    destination->unread = source->unread;
+    destination->capabilities = source->capabilities;
+    destination->updated_at_milliseconds = source->updated_at_milliseconds;
+    copy_text(destination->display_title, source->display_title);
+    copy_text(destination->working_directory_label, source->working_directory_label);
+    copy_text(destination->status_detail, source->status_detail);
 }
 
 static void invalidate_snapshot(cr_device_state_t *state)
@@ -60,19 +61,22 @@ static cr_device_result_t apply_snapshot(cr_device_state_t *state, const cr_mess
 {
     size_t count = message->body.state_snapshot.session_count;
     if (count > CR_MAX_SESSIONS) return CR_DEVICE_INVALID_MESSAGE;
-    cr_device_session_t sessions[CR_MAX_SESSIONS] = {0};
     for (size_t index = 0; index < count; index++) {
-        if (!copy_session(&sessions[index], &message->body.state_snapshot.sessions[index])) {
+        const cr_session_view_t *session = &message->body.state_snapshot.sessions[index];
+        if (!session_is_valid(session)) {
             return CR_DEVICE_INVALID_MESSAGE;
         }
         for (size_t previous = 0; previous < index; previous++) {
-            if (sessions[previous].session_key == sessions[index].session_key) {
+            if (message->body.state_snapshot.sessions[previous].session_key == session->session_key) {
                 return CR_DEVICE_INVALID_MESSAGE;
             }
         }
     }
 
-    memcpy(state->sessions, sessions, sizeof(sessions));
+    memset(state->sessions, 0, sizeof(state->sessions));
+    for (size_t index = 0; index < count; index++) {
+        copy_session(&state->sessions[index], &message->body.state_snapshot.sessions[index]);
+    }
     state->session_count = count;
     state->generation = message->body.state_snapshot.generation;
     state->next_delta_sequence = 1;
@@ -106,9 +110,8 @@ static cr_device_result_t apply_delta(cr_device_state_t *state, const cr_message
     if (target == state->session_count && state->session_count == CR_MAX_SESSIONS) {
         return CR_DEVICE_INVALID_MESSAGE;
     }
-    cr_device_session_t updated = {0};
-    if (!copy_session(&updated, &message->body.state_delta.session)) return CR_DEVICE_INVALID_MESSAGE;
-    state->sessions[target] = updated;
+    if (!session_is_valid(&message->body.state_delta.session)) return CR_DEVICE_INVALID_MESSAGE;
+    copy_session(&state->sessions[target], &message->body.state_delta.session);
     if (target == state->session_count) state->session_count++;
     state->next_delta_sequence++;
     return CR_DEVICE_APPLIED;

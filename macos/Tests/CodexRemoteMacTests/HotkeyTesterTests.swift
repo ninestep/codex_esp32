@@ -16,6 +16,19 @@ final class HotkeyTesterTests: XCTestCase {
         XCTAssertEqual(try parser.parseRequired("control arrowleft").displayValue, "⌃←")
     }
 
+    func testParserNormalizesStandaloneFunctionKeyWithDistinctDownAndUpFlags() throws {
+        let parser = HotkeyParser()
+
+        for value in ["Fn", "fn", "FN"] {
+            let hotkey = try parser.parseRequired(value)
+            XCTAssertEqual(hotkey.displayValue, "Fn")
+            XCTAssertEqual(hotkey.keyCode, 0x3F)
+            XCTAssertEqual(hotkey.keyDownFlags, .maskSecondaryFn)
+            XCTAssertEqual(hotkey.keyUpFlags, [])
+            XCTAssertTrue(hotkey.requiresHoldMode)
+        }
+    }
+
     func testParserRejectsInvalidOrAmbiguousHotkeys() throws {
         let parser = HotkeyParser()
 
@@ -33,6 +46,11 @@ final class HotkeyTesterTests: XCTestCase {
         }
         XCTAssertThrowsError(try parser.parseRequired("⌘ ⌘ A")) { error in
             XCTAssertEqual(error as? HotkeyParseError, .duplicateModifier("⌘"))
+        }
+        for value in ["⌘Fn", "Fn+A"] {
+            XCTAssertThrowsError(try parser.parseRequired(value)) { error in
+                XCTAssertEqual(error as? HotkeyParseError, .functionKeyMustBeStandalone)
+            }
         }
         XCTAssertNil(parser.parse("⌘ A B"))
     }
@@ -52,6 +70,19 @@ final class HotkeyTesterTests: XCTestCase {
         XCTAssertEqual(emitter.events, [.down(keyCode: 49), .up(keyCode: 49)])
         XCTAssertEqual(result, .eventSent(displayValue: "⌥Space"))
         XCTAssertEqual(result.message, "按键事件已发送")
+    }
+
+    @MainActor
+    func testTesterHoldsFunctionKeyForOneSecondBeforeRelease() async throws {
+        let clock = ImmediateHotkeyTestClock()
+        let emitter = RecordingHotkeyEmitter(isAuthorized: true)
+
+        let result = try await HotkeyTester(emitter: emitter, clock: clock).test("Fn")
+
+        XCTAssertEqual(clock.requestedSeconds, [1, 1, 1, 1])
+        XCTAssertEqual(emitter.events, [.down(keyCode: 0x3F), .up(keyCode: 0x3F)])
+        XCTAssertEqual(result, .eventSent(displayValue: "Fn"))
+        XCTAssertEqual(result.message, "Fn 按住事件已发送")
     }
 
     @MainActor

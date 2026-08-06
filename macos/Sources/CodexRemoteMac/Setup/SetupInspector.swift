@@ -650,7 +650,8 @@ public struct ManagedHooksConfigurationValidator: Sendable {
                 guard let command = hook["command"] as? String else {
                     return false
                 }
-                return normalizedHookCommand(command) == hookExecutableURL.standardizedFileURL.path
+                return command.trimmingCharacters(in: .whitespacesAndNewlines)
+                    == managedHookShellCommand(forPath: hookExecutableURL.standardizedFileURL.path)
             }
             guard !ownedHooks.isEmpty else {
                 continue
@@ -698,14 +699,6 @@ public struct ManagedHooksConfigurationValidator: Sendable {
         return (value as? NSNumber)?.intValue
     }
 
-    private static func normalizedHookCommand(_ command: String) -> String {
-        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
-        if (trimmed.hasPrefix("'") && trimmed.hasSuffix("'"))
-            || (trimmed.hasPrefix("\"") && trimmed.hasSuffix("\"")) {
-            return String(trimmed.dropFirst().dropLast())
-        }
-        return trimmed
-    }
 }
 
 private func setupTrustedDirectoryNoFollow(at url: URL) throws -> Bool {

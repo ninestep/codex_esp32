@@ -24,7 +24,7 @@ final class SessionRegistryTests: XCTestCase {
         XCTAssertEqual(session.providerSessionID, "codex-99")
     }
 
-    func testRegisterLaunchRejectsLiveTerminalAlreadyBound() async throws {
+    func testRegisterLaunchReplacesPreviousSessionBoundToSameTerminal() async throws {
         let registry = SessionRegistry(idGenerator: IDGenerator(["remote-1", "remote-2"]).next)
         try await registry.registerLaunch(
             launcherInstanceID: "launch-1",
@@ -32,19 +32,35 @@ final class SessionRegistryTests: XCTestCase {
             displayTitle: "ESP32",
             workingDirectoryLabel: "~/esp32"
         )
+        _ = try await registry.bindProviderSession(
+            launcherInstanceID: "launch-1",
+            providerSessionID: "codex-old"
+        )
 
+        try await registry.registerLaunch(
+            launcherInstanceID: "launch-2",
+            terminalTargetID: "term-7",
+            displayTitle: "ESP32 second",
+            workingDirectoryLabel: "~/esp32-second"
+        )
+
+        let replacement = try await registry.bindProviderSession(
+            launcherInstanceID: "launch-2",
+            providerSessionID: "codex-new"
+        )
+        XCTAssertEqual(replacement.remoteSessionID, "remote-2")
+        XCTAssertEqual(replacement.displayTitle, "ESP32 second")
         do {
-            try await registry.registerLaunch(
-                launcherInstanceID: "launch-2",
-                terminalTargetID: "term-7",
-                displayTitle: "ESP32 second",
-                workingDirectoryLabel: "~/esp32-second"
-            )
-            XCTFail("Expected terminalAlreadyBound")
-        } catch let error as SessionRegistryError {
-            XCTAssertEqual(error, .terminalAlreadyBound("term-7"))
+            _ = try await registry.session(remoteSessionID: "remote-1")
+            XCTFail("Expected replaced remote session to be removed")
         } catch {
-            XCTFail("Expected SessionRegistryError, got \(error)")
+            XCTAssertEqual(error as? SessionRegistryError, .unknownRemoteSession("remote-1"))
+        }
+        do {
+            _ = try await registry.session(providerSessionID: "codex-old")
+            XCTFail("Expected replaced provider session to be removed")
+        } catch {
+            XCTAssertEqual(error as? SessionRegistryError, .unknownRemoteSession("codex-old"))
         }
     }
 

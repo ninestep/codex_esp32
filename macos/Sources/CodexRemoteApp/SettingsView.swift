@@ -24,17 +24,28 @@ struct SettingsView: View {
             }
 
             Section("豆包语音输入") {
-                TextField("快捷键（例如 ⌥Space）", text: $model.settings.doubaoHotkey)
-                    .textFieldStyle(.roundedBorder)
+                HStack {
+                    TextField("快捷键（例如 Fn 或 ⌥Space）", text: $model.settings.doubaoHotkey)
+                        .textFieldStyle(.roundedBorder)
+                    Button("使用 Fn") {
+                        model.settings.selectDoubaoFunctionKey()
+                    }
+                }
                 if !model.settings.doubaoHotkey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                    HotkeyParser().parse(model.settings.doubaoHotkey) == nil {
-                    Label("快捷键格式无效，需要至少一个修饰键和一个受支持按键。", systemImage: "exclamationmark.triangle.fill")
+                    Label("快捷键格式无效；请输入独立 Fn，或修饰键加受支持按键。", systemImage: "exclamationmark.triangle.fill")
                         .font(.caption)
                         .foregroundStyle(.orange)
                 }
                 Picker("触发模式", selection: $model.settings.hotkeyMode) {
                     Text("按住型").tag(HotkeyTriggerMode.hold)
                     Text("切换型").tag(HotkeyTriggerMode.toggle)
+                }
+                .disabled(functionKeySelected)
+                if functionKeySelected {
+                    Text("Fn 必须使用按住型：设备按下时发送 Fn key-down，松开时发送 Fn key-up。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 Text(model.audioReadinessText)
                     .foregroundStyle(.secondary)
@@ -70,5 +81,9 @@ struct SettingsView: View {
             }
         }
         .padding(20)
+    }
+
+    private var functionKeySelected: Bool {
+        HotkeyParser().parse(model.settings.doubaoHotkey)?.requiresHoldMode == true
     }
 }

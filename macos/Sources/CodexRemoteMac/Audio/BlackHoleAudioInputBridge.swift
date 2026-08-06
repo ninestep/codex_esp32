@@ -124,7 +124,7 @@ public final class BlackHoleAudioInputBridge: AudioInputHandling {
     private func configureEngine(outputDeviceID: AudioDeviceID) throws {
         engine.attach(player)
         guard let format = AVAudioFormat(
-            commonFormat: .pcmFormatInt16,
+            commonFormat: .pcmFormatFloat32,
             sampleRate: 16_000,
             channels: 1,
             interleaved: false
@@ -150,24 +150,26 @@ public final class BlackHoleAudioInputBridge: AudioInputHandling {
 
     private func schedule(samples: [Int16]) throws {
         guard let format = AVAudioFormat(
-            commonFormat: .pcmFormatInt16,
+            commonFormat: .pcmFormatFloat32,
             sampleRate: 16_000,
             channels: 1,
             interleaved: false
         ), let buffer = AVAudioPCMBuffer(
             pcmFormat: format,
             frameCapacity: AVAudioFrameCount(samples.count)
-        ), let target = buffer.int16ChannelData?[0] else {
+        ), let target = buffer.floatChannelData?[0] else {
             throw AudioInputBridgeError.audioSystemFailure
         }
         buffer.frameLength = AVAudioFrameCount(samples.count)
-        target.update(from: samples, count: samples.count)
+        for (index, sample) in samples.enumerated() {
+            target[index] = Float(sample) / Float(Int16.max)
+        }
         player.scheduleBuffer(buffer)
     }
 
     private func playbackCompletion() async {
         guard let format = AVAudioFormat(
-            commonFormat: .pcmFormatInt16,
+            commonFormat: .pcmFormatFloat32,
             sampleRate: 16_000,
             channels: 1,
             interleaved: false

@@ -4,6 +4,19 @@ import XCTest
 @testable import CodexRemoteMac
 
 final class ManagedHooksConfigurationTests: XCTestCase {
+    func testInstallShellQuotesRawAbsoluteCommandContainingSpaces() throws {
+        let fixture = try HooksFixture(existingJSON: #"{"hooks":{}}"#)
+        defer { fixture.cleanup() }
+
+        try ManagedHooksConfiguration(paths: fixture.paths).install(command: fixture.commandURL.path)
+
+        let object = try fixture.readJSONObject()
+        XCTAssertEqual(
+            fixture.codexRemoteCommands(in: object),
+            Array(repeating: "'\(fixture.commandURL.path)'", count: 4)
+        )
+    }
+
     func testInstallPreservesUnrelatedHooksUnknownFieldsAndIsIdempotent() throws {
         let fixture = try HooksFixture(
             existingJSON: """

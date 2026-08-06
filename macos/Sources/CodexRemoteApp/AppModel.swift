@@ -49,6 +49,8 @@ final class AppModel: ObservableObject {
     private var isStarting = false
     private var setupServices: SetupServices
     private let hotkeyTester: HotkeyTester
+    private let bluetoothConnectionStatus: BluetoothConnectionStatus
+    private let esp32ConnectedReader: @Sendable () async -> Bool
     private var setupActivity = SetupActivityState()
     private var pendingSetupSettings: AppSettings?
     var onOpenSetupAssistant: (() -> Void)?
@@ -59,8 +61,17 @@ final class AppModel: ObservableObject {
 
     init() {
         let loadedSettings = Self.loadSettings()
+        let bluetoothConnectionStatus = BluetoothConnectionStatus()
+        let esp32ConnectedReader: @Sendable () async -> Bool = {
+            await bluetoothConnectionStatus.isConnected
+        }
         settings = loadedSettings
-        setupServices = Self.makeSetupServices(settings: loadedSettings)
+        self.bluetoothConnectionStatus = bluetoothConnectionStatus
+        self.esp32ConnectedReader = esp32ConnectedReader
+        setupServices = Self.makeSetupServices(
+            settings: loadedSettings,
+            esp32ConnectedReader: esp32ConnectedReader
+        )
         hotkeyTester = HotkeyTester()
     }
 
@@ -118,7 +129,14 @@ final class AppModel: ObservableObject {
         audioStatus = audioInput.dependencyStatus
         let coordinator = MacClientCoordinator(sessionService: service, audioInput: audioInput)
         coordinator.onSnapshotChange = { [weak self] snapshot in
-            self?.snapshot = snapshot
+            guard let self else { return }
+            let connectionChanged = self.bluetoothConnectionStatus.update(snapshot.transportState)
+            self.snapshot = snapshot
+            if connectionChanged {
+                Task { [weak self] in
+                    await self?.refreshSetup()
+                }
+            }
         }
         let dispatcher = SessionIPCDispatcher(
             service: service,
@@ -164,7 +182,10 @@ final class AppModel: ObservableObject {
         ))
         audioStatus = runtime?.audioInput.dependencyStatus ?? audioStatus
         if setupActivity.requestServiceRebuild() {
-            setupServices = Self.makeSetupServices(settings: settingsToSave)
+            setupServices = Self.makeSetupServices(
+                settings: settingsToSave,
+                esp32ConnectedReader: esp32ConnectedReader
+            )
             settingsSaveMessage = "设置已保存"
         } else {
             pendingSetupSettings = settingsToSave
@@ -322,7 +343,10 @@ final class AppModel: ObservableObject {
         while shouldRebuild, let pendingSetupSettings {
             _ = setupActivity.begin()
             self.pendingSetupSettings = nil
-            setupServices = Self.makeSetupServices(settings: pendingSetupSettings)
+            setupServices = Self.makeSetupServices(
+                settings: pendingSetupSettings,
+                esp32ConnectedReader: esp32ConnectedReader
+            )
             let refreshedServices = setupServices
             let refreshOutcome = await refreshedServices.coordinator.refresh()
             await synchronizeSetupState(
@@ -379,7 +403,10 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private static func makeSetupServices(settings: AppSettings) -> SetupServices {
+    private static func makeSetupServices(
+        settings: AppSettings,
+        esp32ConnectedReader: @escaping @Sendable () async -> Bool
+    ) -> SetupServices {
         let fileManager = FileManager.default
         let home = fileManager.homeDirectoryForCurrentUser.standardizedFileURL
         let codexDirectory = home.appendingPathComponent(".codex", isDirectory: true)
@@ -392,9 +419,12 @@ final class AppModel: ObservableObject {
         let hooksURL = codexDirectory.appendingPathComponent("hooks.json")
         let sourceApplicationURL = Bundle.main.bundleURL
         let testedHotkey = settings.lastTestedDoubaoHotkey
-        let environment = MacSetupEnvironment(hotkeyTestReader: { hotkey in
-            HotkeyParser().parse(hotkey)?.displayValue == testedHotkey
-        })
+        let environment = MacSetupEnvironment(
+            esp32ConnectedReader: esp32ConnectedReader,
+            hotkeyTestReader: { hotkey in
+                HotkeyParser().parse(hotkey)?.displayValue == testedHotkey
+            }
+        )
         let inspectionContext = SetupInspectionContext(
             socketPath: settings.socketPath,
             doubaoHotkey: settings.doubaoHotkey,

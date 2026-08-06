@@ -102,21 +102,30 @@ struct SetupAssistantView: View {
                 } else if stage == .testing {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
-                            TextField("豆包快捷键，例如 ⌥Space", text: $model.settings.doubaoHotkey)
+                            TextField("豆包快捷键，例如 Fn 或 ⌥Space", text: $model.settings.doubaoHotkey)
                                 .textFieldStyle(.roundedBorder)
+                            Button("使用 Fn") {
+                                model.settings.selectDoubaoFunctionKey()
+                            }
                             Picker("触发模式", selection: $model.settings.hotkeyMode) {
                                 Text("按住型").tag(HotkeyTriggerMode.hold)
                                 Text("切换型").tag(HotkeyTriggerMode.toggle)
                             }
                             .frame(width: 150)
+                            .disabled(functionKeySelected)
                             Button("保存") { model.saveSettings() }
                                 .disabled(!model.isDoubaoHotkeyInputValid)
                         }
                         if !model.settings.doubaoHotkey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                            HotkeyParser().parse(model.settings.doubaoHotkey) == nil {
-                            Label("快捷键格式无效，需要至少一个修饰键和一个受支持按键。", systemImage: "exclamationmark.triangle.fill")
+                            Label("快捷键格式无效；请输入独立 Fn，或修饰键加受支持按键。", systemImage: "exclamationmark.triangle.fill")
                                 .font(.caption)
                                 .foregroundStyle(.orange)
+                        }
+                        if functionKeySelected {
+                            Text("Fn 必须使用按住型：设备按下时发送 Fn key-down，松开时发送 Fn key-up。")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
                         HStack {
                             Text(model.hotkeyTestState.message)
@@ -193,6 +202,10 @@ struct SetupAssistantView: View {
         guard !required.isEmpty else { return 0 }
         let ready = required.filter { $0.state == .ready || $0.state == .notApplicable }
         return Double(ready.count) / Double(required.count)
+    }
+
+    private var functionKeySelected: Bool {
+        HotkeyParser().parse(model.settings.doubaoHotkey)?.requiresHoldMode == true
     }
 
     private var visibleResults: [SetupCheckResult] {

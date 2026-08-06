@@ -41,12 +41,13 @@ public struct ManagedHooksConfiguration: Sendable {
     @discardableResult
     public func install(command: String) throws -> Bool {
         let commandPath = try validateOwnedCommandExecutable(command)
+        let managedCommand = managedHookShellCommand(forPath: commandPath)
         let snapshot = try readSnapshot()
         var root = try parseRoot(snapshot.data)
         try validateManagedEvents(in: root)
 
         let originalData = try serialized(root)
-        root = try installingManagedHooks(in: root, command: command)
+        root = try installingManagedHooks(in: root, command: managedCommand)
         let desiredData = try serialized(root)
         guard desiredData != originalData || snapshot.exists == false else {
             return false
@@ -467,6 +468,10 @@ public struct ManagedHooksConfiguration: Sendable {
         let mode: mode_t
         let status: stat?
     }
+}
+
+func managedHookShellCommand(forPath path: String) -> String {
+    "'\(path.replacingOccurrences(of: "'", with: "'\\''"))'"
 }
 
 private func isTrustedDirectoryStatus(_ status: stat) -> Bool {

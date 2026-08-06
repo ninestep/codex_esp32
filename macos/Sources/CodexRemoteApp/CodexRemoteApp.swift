@@ -6,13 +6,23 @@ struct CodexRemoteApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
-        MenuBarExtra("Codex Remote", systemImage: appDelegate.model.menuBarSymbol) {
+        MenuBarExtra {
             MenuBarContentView(model: appDelegate.model)
+        } label: {
+            MenuBarStatusLabel(model: appDelegate.model)
         }
 
         Settings {
             SettingsView(model: appDelegate.model)
         }
+    }
+}
+
+private struct MenuBarStatusLabel: View {
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        Label("Codex Remote", systemImage: model.menuBarSymbol)
     }
 }
 

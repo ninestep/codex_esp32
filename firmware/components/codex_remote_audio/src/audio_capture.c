@@ -37,6 +37,10 @@ static size_t pre_roll_start;
 static size_t pre_roll_count;
 static uint32_t next_sequence = 1;
 static uint32_t last_sequence;
+static int16_t pcm_buffer[CR_AUDIO_SAMPLE_COUNT];
+static uint8_t encoded_buffer[CR_AUDIO_ENCODED_BYTES];
+static cr_message_t encoded_message;
+static stored_frame_t streaming_frame;
 
 static void send_stored(const stored_frame_t *stored)
 {
@@ -58,8 +62,6 @@ static void send_stored(const stored_frame_t *stored)
 static void capture_task(void *context)
 {
     (void)context;
-    int16_t pcm[CR_AUDIO_SAMPLE_COUNT];
-    uint8_t encoded[CR_AUDIO_ENCODED_BYTES];
     while (true) {
         xSemaphoreTake(lock, portMAX_DELAY);
         capture_mode_t current_mode = mode;
@@ -68,17 +70,16 @@ static void capture_task(void *context)
             vTaskDelay(pdMS_TO_TICKS(10));
             continue;
         }
-        if (esp_codec_dev_read(microphone, pcm, sizeof(pcm)) != ESP_CODEC_DEV_OK) {
+        if (esp_codec_dev_read(microphone, pcm_buffer, sizeof(pcm_buffer)) != ESP_CODEC_DEV_OK) {
             ESP_LOGW(TAG, "microphone read failed");
             vTaskDelay(pdMS_TO_TICKS(20));
             continue;
         }
 
-        cr_message_t message;
         uint32_t sequence = next_sequence++;
         uint64_t timestamp = (uint64_t)(esp_timer_get_time() * 16 / 1000);
         if (cr_audio_frame_encode_mono(
-            pcm, CR_AUDIO_SAMPLE_COUNT, sequence, timestamp, encoded, &message
+            pcm_buffer, CR_AUDIO_SAMPLE_COUNT, sequence, timestamp, encoded_buffer, &encoded_message
         ) != CR_OK) continue;
 
         xSemaphoreTake(lock, portMAX_DELAY);
@@ -94,20 +95,20 @@ static void capture_task(void *context)
             pre_roll[target] = (stored_frame_t){
                 .sequence = sequence,
                 .timestamp = timestamp,
-                .predictor = message.body.audio_frame.predictor,
+                .predictor = encoded_message.body.audio_frame.predictor,
             };
-            memcpy(pre_roll[target].encoded, encoded, sizeof(encoded));
+            memcpy(pre_roll[target].encoded, encoded_buffer, sizeof(encoded_buffer));
         }
         xSemaphoreGive(lock);
 
         if (current_mode == CAPTURE_STREAMING) {
-            stored_frame_t frame = {
+            streaming_frame = (stored_frame_t){
                 .sequence = sequence,
                 .timestamp = timestamp,
-                .predictor = message.body.audio_frame.predictor,
+                .predictor = encoded_message.body.audio_frame.predictor,
             };
-            memcpy(frame.encoded, encoded, sizeof(encoded));
-            send_stored(&frame);
+            memcpy(streaming_frame.encoded, encoded_buffer, sizeof(encoded_buffer));
+            send_stored(&streaming_frame);
             last_sequence = sequence;
         }
     }

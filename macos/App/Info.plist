@@ -26,6 +26,8 @@
     <true/>
     <key>NSBluetoothAlwaysUsageDescription</key>
     <string>连接 Codex Remote 设备并同步会话状态、控制终端和接收语音。</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>允许 Codex Remote 控制 Ghostty，以聚焦用户选择的 Codex 会话并发送终端操作。</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>接收 Codex Remote 设备语音并送入用户选择的语音输入流程。</string>
 </dict>

@@ -56,6 +56,28 @@ final class SetupInspectorTests: XCTestCase {
         XCTAssertFalse(different)
     }
 
+    func testMacSetupEnvironmentUsesInjectedESP32ConnectionState() async {
+        let connected = MacSetupEnvironment(esp32ConnectedReader: { true })
+        let disconnected = MacSetupEnvironment(esp32ConnectedReader: { false })
+
+        let connectedValue = await connected.isESP32Connected()
+        let disconnectedValue = await disconnected.isESP32Connected()
+        XCTAssertTrue(connectedValue)
+        XCTAssertFalse(disconnectedValue)
+    }
+
+    func testAppModelWiresLiveBluetoothStateIntoSetupInspection() throws {
+        let macosRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let sourceURL = macosRoot.appendingPathComponent("Sources/CodexRemoteApp/AppModel.swift")
+        let source = try String(contentsOf: sourceURL, encoding: .utf8)
+
+        XCTAssertTrue(source.contains("bluetoothConnectionStatus.update(snapshot.transportState)"))
+        XCTAssertTrue(source.contains("esp32ConnectedReader: esp32ConnectedReader"))
+    }
+
     func testInspectReturnsAllItemsInStableUniqueOrderWhenReady() async throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -557,6 +579,9 @@ final class SetupInspectorTests: XCTestCase {
         try write(validHooksJSON(command: "'\(hookExecutableURL.path)'", includeStop: true), to: hooksURL)
         let validHooks = await environment.hooksConfigurationState(at: hooksURL, hookExecutableURL: hookExecutableURL)
         XCTAssertEqual(validHooks, .valid)
+
+        try write(validHooksJSON(command: hookExecutableURL.path, includeStop: true), to: hooksURL)
+        XCTAssertInvalid(await environment.hooksConfigurationState(at: hooksURL, hookExecutableURL: hookExecutableURL))
 
         try write(validHooksJSON(command: "'\(hookExecutableURL.path)'", includeStop: true, sessionMatcher: "resume"), to: hooksURL)
         XCTAssertInvalid(await environment.hooksConfigurationState(at: hooksURL, hookExecutableURL: hookExecutableURL))

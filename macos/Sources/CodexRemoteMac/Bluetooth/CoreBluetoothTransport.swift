@@ -16,6 +16,7 @@ public final class CoreBluetoothTransport: NSObject, BluetoothTransport {
     private var peripheral: CBPeripheral?
     private var discoveredPeripherals: [String: CBPeripheral] = [:]
     private var characteristics: [BluetoothCharacteristic: CBCharacteristic] = [:]
+    private var pendingSubscriptionResets: Set<BluetoothCharacteristic> = []
     private var stateMachine = BluetoothTransportStateMachine()
 
     public override init() {
@@ -34,6 +35,7 @@ public final class CoreBluetoothTransport: NSObject, BluetoothTransport {
         }
         self.peripheral = nil
         characteristics.removeAll()
+        pendingSubscriptionResets.removeAll()
     }
 
     public func send(_ packet: BLETransportPacket, mode: BluetoothWriteMode) throws {
@@ -76,6 +78,11 @@ public final class CoreBluetoothTransport: NSObject, BluetoothTransport {
             case let .subscribe(role):
                 if let characteristic = characteristics[role] {
                     peripheral?.setNotifyValue(true, for: characteristic)
+                }
+            case let .resetSubscription(role):
+                if let characteristic = characteristics[role] {
+                    pendingSubscriptionResets.insert(role)
+                    peripheral?.setNotifyValue(false, for: characteristic)
                 }
             case .connectionReady:
                 break
@@ -139,6 +146,7 @@ extension CoreBluetoothTransport: @preconcurrency CBCentralManagerDelegate {
 
     public func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
         characteristics.removeAll()
+        pendingSubscriptionResets.removeAll()
         self.peripheral = nil
         execute(stateMachine.handle(.disconnected(id: peripheral.identifier.uuidString)))
     }
@@ -158,6 +166,13 @@ extension CoreBluetoothTransport: @preconcurrency CBPeripheralDelegate {
             }
         }
         execute(stateMachine.handle(.characteristicsDiscovered(Set(characteristics.keys))))
+    }
+
+    public func peripheral(_ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?) {
+        guard let role = role(for: characteristic.uuid),
+              pendingSubscriptionResets.remove(role) != nil
+        else { return }
+        peripheral.setNotifyValue(true, for: characteristic)
     }
 
     public func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
