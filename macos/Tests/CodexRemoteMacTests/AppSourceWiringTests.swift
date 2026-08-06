@@ -19,6 +19,65 @@ final class AppSourceWiringTests: XCTestCase {
         )
     }
 
+    func testAppDeclaresAndPackagesCodexRemoteIcon() throws {
+        let macosRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let infoURL = macosRoot.appendingPathComponent("App/Info.plist")
+        let data = try Data(contentsOf: infoURL)
+        let info = try XCTUnwrap(
+            PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any]
+        )
+        let packageScript = try String(
+            contentsOf: macosRoot.appendingPathComponent("Scripts/package-app.zsh"),
+            encoding: .utf8
+        )
+
+        XCTAssertEqual(info["CFBundleIconFile"] as? String, "CodexRemote")
+        XCTAssertTrue(packageScript.contains("App/CodexRemote.icns"))
+        XCTAssertTrue(packageScript.contains("Contents/Resources/CodexRemote.icns"))
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: macosRoot.appendingPathComponent("App/CodexRemote.icns").path
+            )
+        )
+    }
+
+    func testPackageUsesStableLocalSigningIdentityByDefault() throws {
+        let macosRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let packageScript = try String(
+            contentsOf: macosRoot.appendingPathComponent("Scripts/package-app.zsh"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(
+            packageScript.contains(
+                "local_signing_identity=\"Codex Remote Local Code Signing\""
+            )
+        )
+        XCTAssertTrue(
+            packageScript.contains(
+                "signing_identity=${CODE_SIGN_IDENTITY:-$local_signing_identity}"
+            )
+        )
+        XCTAssertTrue(packageScript.contains("security find-identity -v -p codesigning"))
+        XCTAssertTrue(
+            packageScript.contains(
+                "codesign --force --deep --sign \"$signing_identity\" \"$app_dir\""
+            )
+        )
+        XCTAssertTrue(
+            packageScript.contains(
+                "set CODE_SIGN_IDENTITY=- only for disposable ad-hoc builds"
+            )
+        )
+        XCTAssertFalse(packageScript.contains("codesign --force --deep --sign - \"$app_dir\""))
+    }
+
     func testMenuBarLabelObservesAppModel() throws {
         let macosRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -29,6 +88,22 @@ final class AppSourceWiringTests: XCTestCase {
 
         XCTAssertTrue(source.contains("MenuBarStatusLabel(model: appDelegate.model)"))
         XCTAssertTrue(source.contains("@ObservedObject var model: AppModel"))
+        XCTAssertTrue(source.contains("Text(\">_\")"))
+        XCTAssertTrue(source.contains("Image(systemName: model.menuBarSymbol)"))
+        XCTAssertTrue(source.contains("accessibilityLabel"))
+    }
+
+    func testMenuBarSymbolUsesThreeCodexRemoteConnectionStates() throws {
+        let macosRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let sourceURL = macosRoot.appendingPathComponent("Sources/CodexRemoteApp/AppModel.swift")
+        let source = try String(contentsOf: sourceURL, encoding: .utf8)
+
+        XCTAssertTrue(source.contains("case .ready: \"wifi\""))
+        XCTAssertTrue(source.contains("case .unavailable: \"exclamationmark\""))
+        XCTAssertTrue(source.contains("default: \"wifi.slash\""))
     }
 
     func testCoreBluetoothResetsPersistedDeviceInfoSubscription() throws {

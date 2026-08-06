@@ -77,9 +77,9 @@ final class AppModel: ObservableObject {
 
     var menuBarSymbol: String {
         switch snapshot.transportState {
-        case .ready: "dot.radiowaves.left.and.right"
-        case .unavailable: "exclamationmark.triangle"
-        default: "antenna.radiowaves.left.and.right.slash"
+        case .ready: "wifi"
+        case .unavailable: "exclamationmark"
+        default: "wifi.slash"
         }
     }
 

@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="background" x1="180" y1="140" x2="840" y2="900" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#60a5fa"/>
+      <stop offset="0.42" stop-color="#2563eb"/>
+      <stop offset="0.72" stop-color="#1e3a8a"/>
+      <stop offset="1" stop-color="#111827"/>
+    </linearGradient>
+    <linearGradient id="gloss" x1="512" y1="82" x2="512" y2="520" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.34"/>
+      <stop offset="0.58" stop-color="#ffffff" stop-opacity="0.06"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="signal" x1="640" y1="370" x2="842" y2="654" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#dbeafe"/>
+      <stop offset="1" stop-color="#60a5fa"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="34" stdDeviation="34" flood-color="#172554" flood-opacity="0.42"/>
+    </filter>
+    <filter id="symbolShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="10" stdDeviation="9" flood-color="#020617" flood-opacity="0.36"/>
+    </filter>
+  </defs>
+
+  <rect x="72" y="72" width="880" height="880" rx="198" fill="url(#background)" filter="url(#shadow)"/>
+  <rect x="76" y="76" width="872" height="872" rx="194" fill="none" stroke="#ffffff" stroke-opacity="0.18" stroke-width="8"/>
+  <path d="M270 82H754C858 82 942 166 942 270V412C740 304 444 300 82 420V270C82 166 166 82 270 82Z" fill="url(#gloss)"/>
+
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round" filter="url(#symbolShadow)">
+    <path d="M270 364L410 512L270 660" stroke="#ffffff" stroke-width="70"/>
+    <path d="M438 660H598" stroke="#ffffff" stroke-width="70"/>
+    <path d="M650 464C700 488 700 536 650 560" stroke="url(#signal)" stroke-width="42"/>
+    <path d="M704 410C802 466 802 558 704 614" stroke="url(#signal)" stroke-width="42"/>
+    <path d="M758 356C902 442 902 582 758 668" stroke="url(#signal)" stroke-width="42"/>
+  </g>
+</svg>

@@ -31,7 +31,7 @@ Mac 客户端已达到“应用可构建、可打包，一键配置流程可进�
 | `zsh Tests/Scripts/codex-shim.zsh` | 退出 0 |
 | `zsh Tests/Scripts/ble-golden-fixtures.zsh` | 退出 0 |
 | `zsh Scripts/package-app.zsh release /tmp/codex-remote-setup-build` | release App 生成成功 |
-| `codesign --verify --deep --strict` | 临时 App 的 ad-hoc 签名校验通过 |
+| `codesign --verify --deep --strict` | 本机稳定签名 App 的校验通过 |
 | `plutil -lint` | `Info.plist: OK` |
 | 打包资源权限 | `codex`、`codex-remote-hook` 为 755；hooks JSON 为 644 |
 | Core 层平台 import 扫描 | 无匹配 |
@@ -93,6 +93,6 @@ SwiftPM 因沙箱不能写用户级缓存而打印警告，但没有影响测试
 - 未烧录 ESP32；屏幕、触控、GPIO18、麦克风、背光、休眠唤醒和功耗待真机验证。
 - 未安装 BlackHole，未验证“设备音频 → BlackHole → 豆包输入法”的真实识别结果。
 - 未验证 Ghostty 多标签页下的真实会话映射、聚焦、滚动、Enter/Esc 完整链路。
-- App 当前仅 ad-hoc 签名，适合本机验证，不适合作为第三方下载分发物。
+- App 默认使用 `Codex Remote Local Code Signing` 本机稳定签名，适合当前 Mac 的持续更新；它仍不是 Developer ID 签名和公证版本，不适合作为第三方下载分发物。
 - 自定义 JPEG 屏保传输、持久化和轮播尚未实现；当前固件只有内置状态屏保。
 - SwiftPM 最终汇总行在本机显示“0 tests in 0 suites”，但逐项输出明确列出 `[1/322]` 至 `[322/322]` 且命令退出 0；后续若接入 CI，应继续以进程退出码和逐项结果共同判定。

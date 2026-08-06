@@ -22,7 +22,14 @@ private struct MenuBarStatusLabel: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
-        Label("Codex Remote", systemImage: model.menuBarSymbol)
+        HStack(spacing: 2) {
+            Text(">_")
+                .font(.system(size: 12, weight: .bold, design: .monospaced))
+            Image(systemName: model.menuBarSymbol)
+                .font(.system(size: 9, weight: .semibold))
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Codex Remote，\(model.bluetoothStatusText)")
     }
 }
 
