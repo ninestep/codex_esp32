@@ -2,3 +2,4 @@
 .DS_Store
 macos/.build/
 macos/dist/
+.superpowers
