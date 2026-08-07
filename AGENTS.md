@@ -4,6 +4,8 @@
 
 This repository contains two cooperating applications. `macos/` is a Swift 6.2 package with shared protocol/domain code in `Sources/CodexRemoteCore`, macOS integrations in `Sources/CodexRemoteMac`, the SwiftUI app in `Sources/CodexRemoteApp`, and XCTest suites under `Tests/`. `firmware/` is an ESP-IDF project: reusable C components live in `components/`, the device entry point is in `main/`, and host tests are in `test/host/`. BLE golden fixtures are stored in `macos/Fixtures/ble-v1/`. Architecture decisions, implementation plans, and verification notes belong in `docs/`.
 
+PTT audio is a cross-platform runtime path: ESP32 captures and encodes ADPCM, BLE carries frames, and `SpeechAudioInputBridge` on macOS decodes PCM for the native `Speech` framework. Final recognized text is injected into the focused application through `CGEvent`. This path does not require Doubao IME or BlackHole; do not reintroduce either as a runtime dependency without an explicit product decision.
+
 ## Build, Test, and Development Commands
 
 Run commands from the repository root unless noted:
@@ -15,13 +17,15 @@ Run commands from the repository root unless noted:
 - `(cd firmware && idf.py build)` builds ESP32-S3 firmware in an activated ESP-IDF environment.
 - `zsh macos/Scripts/package-app.zsh release /tmp/codex-remote-build` creates an ad-hoc-signed app bundle.
 
+The first launch of a Speech-enabled app requires the macOS Speech Recognition permission. Text injection additionally requires Accessibility permission. Installing or replacing `/Applications/Codex Remote.app`, flashing a device, changing BLE contracts, and modifying user-level hooks remain separate explicit actions from a successful build.
+
 ## Coding Style & Naming Conventions
 
 Match surrounding code and use four-space indentation. Swift types use `UpperCamelCase`; methods, properties, and test names use `lowerCamelCase`. C APIs use the existing `cr_` prefix and `snake_case`; constants and enum cases follow their enclosing module. Keep Core platform-neutral. Do not introduce macOS frameworks into `CodexRemoteCore`. Treat BLE message layouts, UUIDs, limits, and fixtures as a cross-platform contract: update Swift, C, and golden fixtures together.
 
 ## Testing Guidelines
 
-Use XCTest for Swift and focused C executables for firmware logic. Name Swift tests `testBehaviorUnderCondition` and C files `test_<unit>.c`. Add regression coverage for behavior changes. Run targeted tests first, then the relevant full suite and golden-fixture check for protocol changes. Hardware-dependent claims require device evidence; a successful firmware build alone is not a flash or runtime verification.
+Use XCTest for Swift and focused C executables for firmware logic. Name Swift tests `testBehaviorUnderCondition` and C files `test_<unit>.c`. Add regression coverage for behavior changes. Run targeted tests first, then the relevant full suite and golden-fixture check for protocol changes. For Speech bridge changes, cover normal final text, empty text, sequence gaps, recognition failure, and cancellation. Hardware-dependent claims require device evidence; a successful firmware build alone is not a flash or runtime verification. Successful BLE delivery or a permission prompt alone does not prove voice input: verify that a real device PTT session places recognized final text in the intended focus target.
 
 ## Commit & Pull Request Guidelines
 
