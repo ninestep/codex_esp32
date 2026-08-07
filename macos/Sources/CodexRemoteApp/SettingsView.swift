@@ -48,46 +48,15 @@ struct SettingsView: View {
                 }
             }
 
-            Section("豆包语音输入") {
-                LabeledContent("快捷键") {
-                    HotkeyRecorderField(value: $model.settings.doubaoHotkey)
-                }
-                Text("点击录制框后，直接按住豆包中配置的组合键（建议 ⌘⌥）；全部松开后自动记录。")
+            Section("语音输入") {
+                Text("按住 ESP32 设备的语音键说话，松开后识别文本会输入到当前焦点。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                if !model.settings.doubaoHotkey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                   HotkeyParser().parse(model.settings.doubaoHotkey) == nil {
-                    Label("快捷键格式无效；请重新录制至少两个 Command、Option、Control 修饰键。", systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                }
-                Picker("触发模式", selection: $model.settings.hotkeyMode) {
-                    Text("按住型").tag(HotkeyTriggerMode.hold)
-                    Text("切换型").tag(HotkeyTriggerMode.toggle)
-                }
-                .disabled(holdModeRequired)
-                if holdModeRequired {
-                    Text("纯修饰键组合使用按住型：设备按下时按顺序发送，松开时反向释放。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
                 Text(model.audioReadinessText)
                     .foregroundStyle(.secondary)
-                HStack {
-                    Button("测试豆包快捷键") {
-                        Task { await model.testDoubaoHotkey() }
-                    }
-                    .disabled(
-                        model.isSetupBusy
-                            || HotkeyParser().parse(model.settings.doubaoHotkey) == nil
-                    )
-                    Text(model.hotkeyTestState.message)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
                 Button("授权辅助功能…") { model.requestAccessibilityPermission() }
                     .disabled(model.isSetupBusy)
-                Text("Codex CLI 路径和快捷键保存后立即生效；Socket 设置将在下次启动时生效。")
+                Text("Codex CLI 路径保存后立即生效；Socket 设置将在下次启动时生效。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 if let message = model.settingsSaveMessage {
@@ -116,7 +85,7 @@ struct SettingsView: View {
                 Spacer()
                 Button("保存") { model.saveSettings() }
                     .buttonStyle(.borderedProminent)
-                    .disabled(!model.isDoubaoHotkeyInputValid || !model.isCodexCLIPathInputValid)
+                    .disabled(!model.isCodexCLIPathInputValid)
             }
         }
         .padding(20)
@@ -130,10 +99,6 @@ struct SettingsView: View {
         } message: {
             Text("将从 ~/.zshrc、~/.codex/hooks.json 和 ~/.codex-remote/bin/codex 中移除仅由 Codex Remote 管理的内容。此操作不会自动重新配置。")
         }
-    }
-
-    private var holdModeRequired: Bool {
-        HotkeyParser().parse(model.settings.doubaoHotkey)?.requiresHoldMode == true
     }
 
     private func chooseCodexCLI() {

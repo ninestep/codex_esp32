@@ -23,7 +23,8 @@ int main(void)
         sizeof(audio_source)
     );
 
-    assert(strstr(audio_source, "static int16_t pcm_buffer[CR_AUDIO_SAMPLE_COUNT]") != NULL);
+    assert(strstr(audio_source, "static int16_t stereo_pcm_buffer[CR_AUDIO_SAMPLE_COUNT * AUDIO_CHANNEL_COUNT]") != NULL);
+    assert(strstr(audio_source, "static int16_t mono_pcm_buffer[CR_AUDIO_SAMPLE_COUNT]") != NULL);
     assert(strstr(audio_source, "static uint8_t encoded_buffer[CR_AUDIO_ENCODED_BYTES]") != NULL);
     assert(strstr(audio_source, "static cr_message_t encoded_message") != NULL);
     assert(strstr(audio_source, "static stored_frame_t streaming_frame") != NULL);
@@ -61,6 +62,10 @@ int main(void)
     assert(strstr(app_source, "cr_ble_send_ptt_end(device_state.selected_session_key, 0)") != NULL);
     assert(strstr(audio_source, "heap_caps_get_free_size(MALLOC_CAP_INTERNAL)") != NULL);
     assert(strstr(audio_source, "heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)") != NULL);
+    assert(strstr(audio_source, "I2S_SLOT_MODE_STEREO") != NULL);
+    assert(strstr(audio_source, ".channel = AUDIO_CHANNEL_COUNT") != NULL);
+    assert(strstr(audio_source, "esp_codec_dev_set_in_gain(microphone, MICROPHONE_GAIN_DB)") != NULL);
+    assert(strstr(audio_source, "microphone summary: samples=") != NULL);
 
     puts("test_audio_runtime: PASS");
     return 0;

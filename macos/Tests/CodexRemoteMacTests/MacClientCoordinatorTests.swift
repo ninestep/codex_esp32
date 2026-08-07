@@ -165,6 +165,9 @@ final class MacClientCoordinatorTests: XCTestCase {
         XCTAssertEqual(audio.beginSequences, [10])
         XCTAssertEqual(audio.frames, [frame])
         XCTAssertEqual(audio.endSequences, [10])
+        XCTAssertEqual(coordinator.pttDiagnostics.decodedFrameCount, 1)
+        XCTAssertEqual(coordinator.pttDiagnostics.firstFrameSequence, 10)
+        XCTAssertEqual(coordinator.pttDiagnostics.lastFrameSequence, 10)
         XCTAssertEqual(try transport.decodedMessages(), [
             .actionResult(requestID: 50, result: .invalidState, detail: "请先进入会话"),
             .actionResult(requestID: 51, result: .success, detail: ""),
@@ -189,6 +192,28 @@ final class MacClientCoordinatorTests: XCTestCase {
         transport.onStateChange?(.disconnected)
 
         XCTAssertEqual(audio.abortCount, 1)
+    }
+
+    func testAudioPacketDiagnosticsCountFragmentsAndMalformedPackets() async throws {
+        let transport = BluetoothTransportSpy(maximumWriteValueLength: 64)
+        let coordinator = MacClientCoordinator(
+            sessionClient: SessionClientSpy(sessions: []),
+            transport: transport
+        )
+
+        do {
+            try await coordinator.receive(packet: BLETransportPacket(
+                channel: .audioToHost,
+                bytes: Data([0x01, 0x02, 0x03])
+            ))
+            XCTFail("Expected malformed audio fragment")
+        } catch {
+            XCTAssertEqual(error as? BLEFragmentError, .malformedFragment)
+        }
+
+        XCTAssertEqual(coordinator.pttDiagnostics.fragmentCount, 1)
+        XCTAssertEqual(coordinator.pttDiagnostics.byteCount, 3)
+        XCTAssertEqual(coordinator.pttDiagnostics.packetErrorCount, 1)
     }
 
     private func makeSession(id: String, state: RemoteSessionState = .idle) -> RemoteSession {

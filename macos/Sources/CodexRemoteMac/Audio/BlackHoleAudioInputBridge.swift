@@ -4,6 +4,39 @@ import CodexRemoteCore
 import Foundation
 import OSLog
 
+struct AudioSignalDiagnostics: Equatable, Sendable {
+    var frameCount = 0
+    var sampleCount = 0
+    var peakMagnitude: Int32 = 0
+    var squareSum = 0.0
+
+    var rmsMagnitude: Int32 {
+        guard sampleCount > 0 else { return 0 }
+        return Int32((squareSum / Double(sampleCount)).squareRoot().rounded())
+    }
+
+    mutating func record(_ samples: [Int16]) {
+        frameCount += 1
+        sampleCount += samples.count
+        for sample in samples {
+            let value = Int32(sample)
+            peakMagnitude = max(peakMagnitude, abs(value))
+            squareSum += Double(value) * Double(value)
+        }
+    }
+}
+
+struct BlackHoleOutputGain: Sendable {
+    static let multiplier: Int32 = 24
+
+    func apply(to sample: Int16) -> Int16 {
+        let amplified = Int32(sample) * Self.multiplier
+        if amplified > Int32(Int16.max) { return Int16.max }
+        if amplified < Int32(Int16.min) { return Int16.min }
+        return Int16(amplified)
+    }
+}
+
 @MainActor
 public final class BlackHoleAudioInputBridge: AudioInputHandling {
     private static let logger = Logger(subsystem: "CodexRemote", category: "BlackHoleAudio")
@@ -19,12 +52,15 @@ public final class BlackHoleAudioInputBridge: AudioInputHandling {
     private let originalInputDeviceIDProvider: () -> AudioDeviceID?
     private let setDefaultInputDeviceIDOperation: ((AudioDeviceID) throws -> Void)?
     private let configureEngineOperation: ((AudioDeviceID) throws -> Void)?
+    private let playbackCompletionOperation: (() async -> Void)?
     private let codec = IMAADPCMCodec()
+    private let outputGain = BlackHoleOutputGain()
     private var engine: AVAudioEngine?
     private var player: AVAudioPlayerNode?
     private var originalInputDeviceID: AudioDeviceID?
     private var expectedSequence: UInt32?
     private var activeHotkey: ParsedHotkey?
+    private var signalDiagnostics = AudioSignalDiagnostics()
 
     public init(
         hotkeyText: String,
@@ -40,6 +76,7 @@ public final class BlackHoleAudioInputBridge: AudioInputHandling {
         self.originalInputDeviceIDProvider = { catalog.defaultInputDeviceID() }
         self.setDefaultInputDeviceIDOperation = nil
         self.configureEngineOperation = nil
+        self.playbackCompletionOperation = nil
     }
 
     init(
@@ -49,7 +86,8 @@ public final class BlackHoleAudioInputBridge: AudioInputHandling {
         originalInputDeviceID: AudioDeviceID?,
         emitter: any HotkeyEmitting,
         setDefaultInputDeviceIDOperation: @escaping (AudioDeviceID) throws -> Void = { _ in },
-        configureEngineOperation: @escaping (AudioDeviceID) throws -> Void = { _ in }
+        configureEngineOperation: @escaping (AudioDeviceID) throws -> Void = { _ in },
+        playbackCompletionOperation: @escaping () async -> Void = {}
     ) {
         self.catalog = CoreAudioDeviceCatalog()
         self.emitter = emitter
@@ -59,6 +97,7 @@ public final class BlackHoleAudioInputBridge: AudioInputHandling {
         self.originalInputDeviceIDProvider = { originalInputDeviceID }
         self.setDefaultInputDeviceIDOperation = setDefaultInputDeviceIDOperation
         self.configureEngineOperation = configureEngineOperation
+        self.playbackCompletionOperation = playbackCompletionOperation
     }
 
     public func begin(firstAudioSequence: UInt32) throws {
@@ -85,6 +124,7 @@ public final class BlackHoleAudioInputBridge: AudioInputHandling {
             try triggerBegin(hotkey)
             activeHotkey = hotkey
             expectedSequence = firstAudioSequence
+            signalDiagnostics = AudioSignalDiagnostics()
         } catch {
             restoreSystemState()
             throw error
@@ -100,7 +140,9 @@ public final class BlackHoleAudioInputBridge: AudioInputHandling {
                 try schedule(samples: Array(repeating: 0, count: IMAADPCMCodec.samplesPerFrame))
             }
         }
-        try schedule(samples: codec.decode(frame))
+        let samples = try codec.decode(frame)
+        signalDiagnostics.record(samples)
+        try schedule(samples: samples)
         self.expectedSequence = frame.sequence &+ 1
     }
 
@@ -122,6 +164,14 @@ public final class BlackHoleAudioInputBridge: AudioInputHandling {
     public func end(lastAudioSequence: UInt32) async throws {
         guard expectedSequence != nil else { throw AudioInputBridgeError.notActive }
         do {
+            if let playbackCompletionOperation {
+                await playbackCompletionOperation()
+            } else {
+                try await playbackCompletion()
+            }
+            let detail = "frames=\(signalDiagnostics.frameCount) samples=\(signalDiagnostics.sampleCount) "
+                + "peak=\(signalDiagnostics.peakMagnitude) rms=\(signalDiagnostics.rmsMagnitude)"
+            Self.logger.info("PTT PCM summary \(detail, privacy: .public)")
             if let hotkey = activeHotkey { try triggerEnd(hotkey) }
             restoreSystemState()
             _ = lastAudioSequence
@@ -200,9 +250,29 @@ public final class BlackHoleAudioInputBridge: AudioInputHandling {
         }
         buffer.frameLength = AVAudioFrameCount(samples.count)
         for (index, sample) in samples.enumerated() {
-            target[index] = Float(sample) / Float(Int16.max)
+            let amplified = outputGain.apply(to: sample)
+            target[index] = Float(amplified) / Float(Int16.max)
         }
         player.scheduleBuffer(buffer)
+    }
+
+    private func playbackCompletion() async throws {
+        try restartEngineIfNeeded()
+        guard let player,
+              let format = AVAudioFormat(
+                  commonFormat: .pcmFormatFloat32,
+                  sampleRate: 16_000,
+                  channels: 1,
+                  interleaved: false
+              ),
+              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 1)
+        else { throw AudioInputBridgeError.audioSystemFailure }
+        buffer.frameLength = 1
+        await withCheckedContinuation { continuation in
+            player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { _ in
+                continuation.resume()
+            }
+        }
     }
 
     private func triggerBegin(_ hotkey: ParsedHotkey) throws {

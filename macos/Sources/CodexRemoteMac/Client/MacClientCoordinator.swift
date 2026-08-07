@@ -12,12 +12,33 @@ public protocol SessionClient: Sendable {
 
 extension SessionService: SessionClient {}
 
+struct PTTBLEDiagnostics: Equatable, Sendable {
+    var fragmentCount = 0
+    var byteCount = 0
+    var decodedFrameCount = 0
+    var firstFrameSequence: UInt32?
+    var lastFrameSequence: UInt32?
+    var packetErrorCount = 0
+
+    mutating func recordFragment(byteCount: Int) {
+        fragmentCount += 1
+        self.byteCount += byteCount
+    }
+
+    mutating func recordFrame(sequence: UInt32) {
+        decodedFrameCount += 1
+        if firstFrameSequence == nil { firstFrameSequence = sequence }
+        lastFrameSequence = sequence
+    }
+}
+
 @MainActor
 public final class MacClientCoordinator {
     private static let logger = Logger(subsystem: "CodexRemote", category: "MacClientCoordinator")
     public private(set) var deviceInformation: DeviceInformation?
     public private(set) var selectedSessionKey: UInt16?
     public var onSnapshotChange: ((ClientSnapshot) -> Void)?
+    private(set) var pttDiagnostics = PTTBLEDiagnostics()
 
     private let sessionClient: any SessionClient
     private let transport: any BluetoothTransport
@@ -49,7 +70,12 @@ public final class MacClientCoordinator {
         transport.onPacket = { [weak self] packet in
             guard let self else { return }
             Task { @MainActor in
-                try? await self.receive(packet: packet)
+                do {
+                    try await self.receive(packet: packet)
+                } catch {
+                    let detail = "channel=\(packet.channel) error=\(error)"
+                    Self.logger.error("BLE packet processing failed \(detail, privacy: .public)")
+                }
             }
         }
     }
@@ -82,6 +108,9 @@ public final class MacClientCoordinator {
         guard [.controlToHost, .deviceInfo, .audioToHost].contains(packet.channel) else {
             return
         }
+        if packet.channel == .audioToHost {
+            pttDiagnostics.recordFragment(byteCount: packet.bytes.count)
+        }
 
         var reassembler = reassemblers[packet.channel, default: BLEFragmentReassembler()]
         do {
@@ -91,6 +120,9 @@ public final class MacClientCoordinator {
             try await receive(message: messageCodec.decode(data).message)
         } catch {
             reassemblers[packet.channel] = BLEFragmentReassembler()
+            if packet.channel == .audioToHost {
+                pttDiagnostics.packetErrorCount += 1
+            }
             try send(.resyncRequired(reason: .malformedFragment))
             throw error
         }
@@ -185,8 +217,12 @@ public final class MacClientCoordinator {
                     return .actionResult(requestID: requestID, result: .unavailable, detail: "语音链路不可用")
                 }
                 do {
+                    self.pttDiagnostics = PTTBLEDiagnostics()
                     try audioInput.begin(firstAudioSequence: firstAudioSequence)
                     self.activePTTSessionKey = sessionKey
+                    Self.logger.info(
+                        "PTT BLE diagnostic started session=\(sessionKey) firstSequence=\(firstAudioSequence)"
+                    )
                     return .actionResult(requestID: requestID, result: .success, detail: "PTT 已就绪")
                 } catch {
                     return .actionResult(
@@ -198,7 +234,13 @@ public final class MacClientCoordinator {
             }
 
         case let .audioFrame(frame):
-            guard activePTTSessionKey != nil, let audioInput else { return }
+            pttDiagnostics.recordFrame(sequence: frame.sequence)
+            guard activePTTSessionKey != nil, let audioInput else {
+                Self.logger.warning(
+                    "Decoded PTT audio frame without active transaction sequence=\(frame.sequence)"
+                )
+                return
+            }
             do {
                 try audioInput.receive(frame)
             } catch {
@@ -209,6 +251,7 @@ public final class MacClientCoordinator {
 
         case let .pttEnd(requestID, sessionKey, lastAudioSequence):
             try await handleRequest(requestID: requestID) {
+                self.logPTTDiagnostics(sessionKey: sessionKey, deviceLastSequence: lastAudioSequence)
                 guard self.activePTTSessionKey == sessionKey, let audioInput = self.audioInput else {
                     return .actionResult(requestID: requestID, result: .invalidState, detail: "PTT 未开始")
                 }
@@ -247,6 +290,7 @@ public final class MacClientCoordinator {
             audioInput?.abort()
         }
         activePTTSessionKey = nil
+        pttDiagnostics = PTTBLEDiagnostics()
         syncReducer.disconnect()
         deviceInformation = nil
         selectedSessionKey = nil
@@ -259,12 +303,21 @@ public final class MacClientCoordinator {
 
     private func audioErrorDetail(_ error: Error) -> String {
         switch error as? AudioInputBridgeError {
-        case .dependencyMissing: "未检测到 BlackHole 2ch"
-        case .hotkeyNotConfigured: "请先设置豆包语音快捷键"
+        case .dependencyMissing: "原生语音识别服务不可用"
+        case .hotkeyNotConfigured: "语音识别尚未配置"
         case .accessibilityNotGranted: "请授予辅助功能权限"
         case .alreadyActive: "PTT 已在录音"
         case .notActive, .invalidSequence, .audioSystemFailure, .none: "语音链路启动失败"
         }
+    }
+
+    private func logPTTDiagnostics(sessionKey: UInt16, deviceLastSequence: UInt32) {
+        let detail = "session=\(sessionKey) fragments=\(pttDiagnostics.fragmentCount) "
+            + "bytes=\(pttDiagnostics.byteCount) frames=\(pttDiagnostics.decodedFrameCount) "
+            + "firstSequence=\(pttDiagnostics.firstFrameSequence ?? 0) "
+            + "lastSequence=\(pttDiagnostics.lastFrameSequence ?? 0) "
+            + "deviceLastSequence=\(deviceLastSequence) errors=\(pttDiagnostics.packetErrorCount)"
+        Self.logger.info("PTT BLE summary \(detail, privacy: .public)")
     }
 
     private func publishSnapshot() {

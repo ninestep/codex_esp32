@@ -6,6 +6,7 @@ import AppKit
 import AVFoundation
 import Darwin
 import Foundation
+import Speech
 
 enum HotkeyTestViewState: Equatable {
     case idle
@@ -36,7 +37,7 @@ final class AppModel: ObservableObject {
         selectedSessionKey: nil
     )
     @Published private(set) var helperStatus = "未启动"
-    @Published private(set) var audioStatus = AudioDependencyStatus.blackHoleMissing
+    @Published private(set) var audioStatus = AudioDependencyStatus.speechRecognitionUnavailable
     @Published private(set) var setupSnapshot = SetupSnapshot()
     @Published private(set) var setupLog: [SetupLogLine] = []
     @Published private(set) var hotkeyTestState: HotkeyTestViewState = .idle
@@ -108,11 +109,8 @@ final class AppModel: ObservableObject {
 
     var audioReadinessText: String {
         guard audioStatus == .ready else { return audioStatus.userMessage }
-        guard !settings.doubaoHotkey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return "请设置豆包语音快捷键"
-        }
         guard AXIsProcessTrusted() else { return "需要辅助功能权限" }
-        return "豆包语音链路已就绪"
+        return "Mac 原生语音识别已就绪"
     }
 
     var isDoubaoHotkeyInputValid: Bool {
@@ -130,11 +128,9 @@ final class AppModel: ObservableObject {
         defer { isStarting = false }
 
         let service = SessionService()
-        let audioInput = ReloadableAudioInputBridge(current: BlackHoleAudioInputBridge(
-            hotkeyText: settings.doubaoHotkey,
-            hotkeyMode: settings.hotkeyMode
-        ))
-        audioStatus = audioInput.dependencyStatus
+        let speechAuthorized = await SpeechRecognitionAuthorization.request()
+        let audioInput = ReloadableAudioInputBridge(current: SpeechAudioInputBridge())
+        audioStatus = speechAuthorized ? audioInput.dependencyStatus : .speechRecognitionUnavailable
         let coordinator = MacClientCoordinator(sessionService: service, audioInput: audioInput)
         coordinator.onSnapshotChange = { [weak self] snapshot in
             guard let self else { return }
@@ -180,19 +176,14 @@ final class AppModel: ObservableObject {
             return
         }
         settingsToSave.normalizeCodexCLIPath()
-        guard (try? settingsToSave.normalizeDoubaoHotkey()) != nil,
-              let data = try? JSONEncoder().encode(settingsToSave)
-        else {
-            settingsSaveMessage = "快捷键格式无效，设置未保存"
+        guard let data = try? JSONEncoder().encode(settingsToSave) else {
+            settingsSaveMessage = "设置编码失败，未保存"
             return
         }
 
         settings = settingsToSave
         UserDefaults.standard.set(data, forKey: Self.settingsKey)
-        runtime?.audioInput.replace(with: BlackHoleAudioInputBridge(
-            hotkeyText: settingsToSave.doubaoHotkey,
-            hotkeyMode: settingsToSave.hotkeyMode
-        ))
+        runtime?.audioInput.replace(with: SpeechAudioInputBridge())
         audioStatus = runtime?.audioInput.dependencyStatus ?? audioStatus
         if setupActivity.requestServiceRebuild() {
             setupServices = Self.makeSetupServices(

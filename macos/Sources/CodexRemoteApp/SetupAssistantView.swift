@@ -101,42 +101,10 @@ struct SetupAssistantView: View {
                     }
                 } else if stage == .testing {
                     VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text("豆包快捷键（建议 ⌘⌥）")
-                            HotkeyRecorderField(value: $model.settings.doubaoHotkey)
-                                .frame(minWidth: 180)
-                            Picker("触发模式", selection: $model.settings.hotkeyMode) {
-                                Text("按住型").tag(HotkeyTriggerMode.hold)
-                                Text("切换型").tag(HotkeyTriggerMode.toggle)
-                            }
-                            .frame(width: 150)
-                            .disabled(holdModeRequired)
-                            Button("保存") { model.saveSettings() }
-                                .disabled(!model.isDoubaoHotkeyInputValid)
-                        }
-                        if !model.settings.doubaoHotkey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                           HotkeyParser().parse(model.settings.doubaoHotkey) == nil {
-                            Label("快捷键格式无效；请重新录制至少两个 Command、Option、Control 修饰键。", systemImage: "exclamationmark.triangle.fill")
-                                .font(.caption)
-                                .foregroundStyle(.orange)
-                        }
-                        if holdModeRequired {
-                            Text("纯修饰键组合使用按住型：设备按下时按顺序发送，松开时反向释放。")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        HStack {
-                            Text(model.hotkeyTestState.message)
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            Button("测试豆包快捷键") {
-                                pendingRequest = .single(.testHotkey, .doubaoHotkey)
-                            }
-                            .disabled(
-                                model.isSetupBusy
-                                    || HotkeyParser().parse(model.settings.doubaoHotkey) == nil
-                            )
-                        }
+                        Label(model.audioReadinessText, systemImage: "waveform")
+                        Text("语音由 ESP32 PTT 直接驱动 macOS 原生 Speech 识别；松开设备按键后，识别文本将输入当前焦点。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 } else {
                     HStack {
@@ -202,10 +170,6 @@ struct SetupAssistantView: View {
         return Double(ready.count) / Double(required.count)
     }
 
-    private var holdModeRequired: Bool {
-        HotkeyParser().parse(model.settings.doubaoHotkey)?.requiresHoldMode == true
-    }
-
     private var visibleResults: [SetupCheckResult] {
         let allowed = Set(stage.items)
         return model.setupSnapshot.results.filter { allowed.contains($0.item) }
@@ -219,7 +183,6 @@ struct SetupAssistantView: View {
         } else {
             deviceConnected = false
         }
-        let hotkeyReady = model.setupSnapshot.result(for: .doubaoHotkey)?.state == .ready
         return [
             FunctionalTestResult(
                 id: "session-discovery",
@@ -232,16 +195,10 @@ struct SetupAssistantView: View {
             .manual("enter", "Enter 操作", prerequisiteReady: hasSession),
             .manual("escape", "Esc 操作", prerequisiteReady: hasSession),
             FunctionalTestResult(
-                id: "doubao-hotkey",
-                title: "豆包快捷键",
-                state: hotkeyReady ? .verified : .waiting,
-                detail: hotkeyReady ? "按键事件已发送" : "等待完成快捷键发送测试"
-            ),
-            FunctionalTestResult(
                 id: "audio",
-                title: "设备音频到豆包",
+                title: "设备音频到原生识别",
                 state: model.audioStatus == .ready ? .manual : .waiting,
-                detail: model.audioStatus == .ready ? "需使用真实设备和豆包人工验证" : "等待 BlackHole 2ch"
+                detail: model.audioStatus == .ready ? "需使用真实设备说话并检查焦点文本" : "等待语音识别权限"
             ),
             FunctionalTestResult(
                 id: "ble",
@@ -343,7 +300,7 @@ private enum SetupAssistantStage: String, CaseIterable, Identifiable {
         switch self {
         case .foundation: "应用、Ghostty、Codex"
         case .automatic: "PATH、Hooks、权限"
-        case .testing: "IPC、快捷键、设备"
+        case .testing: "IPC、语音、设备"
         case .complete: "就绪状态与剩余验收"
         }
     }
@@ -351,8 +308,8 @@ private enum SetupAssistantStage: String, CaseIterable, Identifiable {
     var description: String {
         switch self {
         case .foundation: "确认运行 Codex Remote 所需的基础软件与稳定安装位置。"
-        case .automatic: "逐项配置命令桥接、Codex hooks、BlackHole 和 macOS 权限。"
-        case .testing: "检查本地 IPC，发送一次豆包快捷键事件，并等待 ESP32 设备。"
+        case .automatic: "逐项配置命令桥接、Codex hooks 和 macOS 权限。"
+        case .testing: "检查本地 IPC、原生语音识别状态，并等待 ESP32 设备。"
         case .complete: "Mac 就绪状态与 ESP32 真机验收分开计算，不会把等待设备误报为失败。"
         }
     }
@@ -371,10 +328,10 @@ private enum SetupAssistantStage: String, CaseIterable, Identifiable {
         case .foundation:
             [.applicationLocation, .ghostty, .codexCLI]
         case .automatic:
-            [.shim, .shellPath, .hooksConfiguration, .hooksTrust, .blackHole,
+            [.shim, .shellPath, .hooksConfiguration, .hooksTrust,
              .bluetoothPermission, .microphonePermission, .accessibilityPermission]
         case .testing:
-            [.doubaoHotkey, .localIPC, .esp32Device]
+            [.localIPC, .esp32Device]
         case .complete:
             SetupItem.allCases
         }

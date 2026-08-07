@@ -128,7 +128,7 @@ final class AppSourceWiringTests: XCTestCase {
         XCTAssertTrue(source.contains("peripheral?.readValue(for: characteristic)"))
     }
 
-    func testSettingsRecommendModifierOnlyShortcutWithoutFunctionKeyEntry() throws {
+    func testSettingsDescribeNativeSpeechWithoutDoubaoShortcutSetup() throws {
         let macosRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
@@ -141,10 +141,9 @@ final class AppSourceWiringTests: XCTestCase {
                 contentsOf: macosRoot.appendingPathComponent(relativePath),
                 encoding: .utf8
             )
-            XCTAssertTrue(source.contains("⌘⌥"), relativePath)
-            XCTAssertTrue(source.contains("HotkeyRecorderField"), relativePath)
-            XCTAssertFalse(source.contains("使用 Fn"), relativePath)
-            XCTAssertFalse(source.contains("独立 Fn"), relativePath)
+            XCTAssertTrue(source.contains("原生") || source.contains("设备的语音键"), relativePath)
+            XCTAssertFalse(source.contains("豆包快捷键"), relativePath)
+            XCTAssertFalse(source.contains("HotkeyRecorderField"), relativePath)
         }
     }
 }

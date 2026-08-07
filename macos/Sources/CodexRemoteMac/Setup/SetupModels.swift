@@ -17,7 +17,12 @@ public enum SetupItem: String, CaseIterable, Equatable, Hashable, Sendable {
     case esp32Device
 
     public var blocksMacReadiness: Bool {
-        self != .esp32Device
+        switch self {
+        case .blackHole, .doubaoHotkey, .esp32Device:
+            false
+        default:
+            true
+        }
     }
 }
 

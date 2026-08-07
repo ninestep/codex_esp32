@@ -8,6 +8,7 @@ public enum HotkeyTriggerMode: String, Codable, CaseIterable, Sendable {
 public enum AudioDependencyStatus: Equatable, Sendable {
     case ready
     case blackHoleMissing
+    case speechRecognitionUnavailable
 
     public var userMessage: String {
         switch self {
@@ -15,6 +16,8 @@ public enum AudioDependencyStatus: Equatable, Sendable {
             return "BlackHole 2ch 已就绪"
         case .blackHoleMissing:
             return "未检测到 BlackHole 2ch，语音功能不可用"
+        case .speechRecognitionUnavailable:
+            return "未授予语音识别权限，语音功能不可用"
         }
     }
 }
@@ -56,7 +59,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
     }
 
     public func canUsePTT(hasSelectedSession: Bool, blackHoleAvailable: Bool) -> Bool {
-        hasSelectedSession && blackHoleAvailable && !doubaoHotkey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        hasSelectedSession && blackHoleAvailable
     }
 
     public var isCodexCLIPathValid: Bool {

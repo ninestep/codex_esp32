@@ -271,11 +271,9 @@ public actor SetupCoordinator {
         .shellPath,
         .hooksConfiguration,
         .hooksTrust,
-        .blackHole,
         .bluetoothPermission,
         .microphonePermission,
         .accessibilityPermission,
-        .doubaoHotkey,
         .localIPC,
     ]
 }

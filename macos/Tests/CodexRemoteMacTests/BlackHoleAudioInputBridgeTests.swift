@@ -5,6 +5,26 @@ import XCTest
 
 @MainActor
 final class BlackHoleAudioInputBridgeTests: XCTestCase {
+    func testBlackHoleOutputGainAmplifiesSpeechAndClipsSafely() {
+        let gain = BlackHoleOutputGain()
+
+        XCTAssertEqual(gain.apply(to: 232), 5_568)
+        XCTAssertEqual(gain.apply(to: -232), -5_568)
+        XCTAssertEqual(gain.apply(to: 2_000), Int16.max)
+        XCTAssertEqual(gain.apply(to: -2_000), Int16.min)
+    }
+
+    func testAudioSignalDiagnosticsMeasurePeakAndRMSWithoutStoringSamples() {
+        var diagnostics = AudioSignalDiagnostics()
+
+        diagnostics.record([-32_768, 0, 32_767])
+
+        XCTAssertEqual(diagnostics.frameCount, 1)
+        XCTAssertEqual(diagnostics.sampleCount, 3)
+        XCTAssertEqual(diagnostics.peakMagnitude, 32_768)
+        XCTAssertEqual(diagnostics.rmsMagnitude, 26_755)
+    }
+
     func testBeginChangesDefaultInputBeforeStartingBlackHoleEngine() throws {
         var operations: [String] = []
         let bridge = BlackHoleAudioInputBridge(
@@ -34,7 +54,8 @@ final class BlackHoleAudioInputBridgeTests: XCTestCase {
 
         XCTAssertTrue(source.contains("commonFormat: .pcmFormatFloat32"))
         XCTAssertTrue(source.contains("floatChannelData?[0]"))
-        XCTAssertTrue(source.contains("Float(sample) / Float(Int16.max)"))
+        XCTAssertTrue(source.contains("let amplified = outputGain.apply(to: sample)"))
+        XCTAssertTrue(source.contains("Float(amplified) / Float(Int16.max)"))
         XCTAssertFalse(source.contains("commonFormat: .pcmFormatInt16"))
     }
 
@@ -84,7 +105,7 @@ final class BlackHoleAudioInputBridgeTests: XCTestCase {
         let source = try String(contentsOf: sourceURL, encoding: .utf8)
 
         let receive = try XCTUnwrap(source.range(of: "try restartEngineIfNeeded()"))
-        let schedule = try XCTUnwrap(source.range(of: "try schedule(samples: codec.decode(frame))"))
+        let schedule = try XCTUnwrap(source.range(of: "try schedule(samples: samples)"))
         XCTAssertLessThan(receive.lowerBound, schedule.lowerBound)
         XCTAssertTrue(source.contains("guard !engine.isRunning else { return }"))
         XCTAssertTrue(source.contains("try engine.start()"))
@@ -172,7 +193,7 @@ final class BlackHoleAudioInputBridgeTests: XCTestCase {
         ])
     }
 
-    func testHoldEndReleasesHotkeyAndRestoresBeforeReturning() async throws {
+    func testHoldEndDrainsPlaybackBeforeReleasingHotkeyAndRestoringInput() async throws {
         var operations: [String] = []
         let emitter = RecordingBlackHoleHotkeyEmitter(isAuthorized: true)
         let bridge = BlackHoleAudioInputBridge(
@@ -181,7 +202,14 @@ final class BlackHoleAudioInputBridgeTests: XCTestCase {
             blackHoleDeviceID: 11,
             originalInputDeviceID: 22,
             emitter: emitter,
-            setDefaultInputDeviceIDOperation: { id in operations.append("input-\(id)") }
+            setDefaultInputDeviceIDOperation: { id in operations.append("input-\(id)") },
+            playbackCompletionOperation: {
+                operations.append("drained")
+                XCTAssertFalse(emitter.events.contains { event in
+                    if case .up = event { return true }
+                    return false
+                })
+            }
         )
 
         try bridge.begin(firstAudioSequence: 1)
@@ -191,7 +219,7 @@ final class BlackHoleAudioInputBridgeTests: XCTestCase {
             .down(49, .maskAlternate),
             .up(49, .maskAlternate),
         ])
-        XCTAssertEqual(operations, ["input-11", "input-22"])
+        XCTAssertEqual(operations, ["input-11", "drained", "input-22"])
     }
 
     func testModifierOnlyCombinationUsesHoldMode() async throws {
