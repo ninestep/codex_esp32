@@ -3,6 +3,7 @@ idf_component_register(
         "src/audio_frame.c"
         "src/asset_state.c"
         "src/codec.c"
+        "src/connection_mode.c"
         "src/crc32.c"
         "src/device_state.c"
         "src/fragment.c"

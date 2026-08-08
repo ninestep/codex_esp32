@@ -46,9 +46,14 @@ int main(void)
     assert(strstr(app_source, "bsp_display_backlight_on()") == NULL);
     assert(strstr(app_source, "xQueueOverwrite(ui_state_queue, state)") != NULL);
     assert(strstr(app_source, "xTaskCreate(ui_state_task, \"ui_state\"") != NULL);
-    const char *ble_start = strstr(app_source, "ESP_ERROR_CHECK(cr_ble_start(&device_state, &ble_config))");
     const char *display_start = strstr(app_source, "if (cr_display_start() == NULL)");
-    assert(ble_start != NULL && display_start != NULL && ble_start < display_start);
+    const char *ui_update = strstr(app_source, "cr_ui_update(&device_state)");
+    const char *mode_ui = ui_update == NULL ? NULL : strstr(ui_update, "refresh_connection_mode_ui()");
+    const char *ble_start = strstr(app_source, "ESP_ERROR_CHECK(cr_ble_start(&device_state, &ble_config))");
+    assert(display_start != NULL && mode_ui != NULL && ble_start != NULL);
+    assert(display_start < mode_ui && mode_ui < ble_start);
+    assert(strstr(app_source, "connection_mode_state.active == CR_CONNECTION_MODE_MAC_COMPANION") != NULL);
+    assert(strstr(app_source, "waiting for first connection mode selection; BLE is disabled") != NULL);
 
     char ui_source[32768];
     read_source("firmware/components/codex_remote_ui/src/ui.c", ui_source, sizeof(ui_source));
@@ -74,6 +79,15 @@ int main(void)
     assert(strstr(ui_source, "LV_EVENT_LONG_PRESSED") != NULL);
     assert(strstr(ui_source, "CR_TERMINAL_KEY_BACKSPACE") != NULL);
     assert(strstr(ui_source, "CR_TERMINAL_KEY_CLEAR_LINE") != NULL);
+    assert(strstr(ui_source, "CONNECTION MODE") != NULL);
+    assert(strstr(ui_source, "CODEX MICRO") != NULL);
+    assert(strstr(ui_source, "micro_light_state") != NULL);
+    assert(strstr(ui_source, "lv_obj_set_size(card->card, 214, 116)") != NULL);
+    assert(strstr(ui_source, "lv_obj_add_flag(card->directory, LV_OBJ_FLAG_HIDDEN)") != NULL);
+    assert(strstr(ui_source, "#%06lX") == NULL);
+    assert(strstr(ui_source, "lv_label_set_text(card->status, \"就绪\")") == NULL);
+    assert(strstr(ui_source, "MAC APP") != NULL);
+    assert(strstr(ui_source, "DEVICE WILL RESTART") != NULL);
 
     char font_source[32768];
     read_prefix(

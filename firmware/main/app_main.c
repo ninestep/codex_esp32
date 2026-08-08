@@ -1,9 +1,12 @@
 #include "codex_remote/ble_transport.h"
 #include "codex_remote/audio_capture.h"
+#include "codex_remote/connection_mode.h"
+#include "codex_remote/connection_mode_store.h"
 #include "codex_remote/device_state.h"
 #include "codex_remote/input_state.h"
 #include "codex_remote/power_state.h"
 #include "codex_remote/ui.h"
+#include "codex_micro/hid_transport.h"
 #include "display_runtime.h"
 
 #include "bsp/display.h"
@@ -13,6 +16,7 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "esp_lv_adapter.h"
+#include "esp_system.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
@@ -23,6 +27,7 @@
 
 static const char *TAG = "codex_remote";
 static cr_device_state_t device_state;
+static cr_connection_mode_state_t connection_mode_state;
 static cr_input_state_t input_state;
 static cr_power_state_t power_state;
 static cr_power_mode_t current_power_mode;
@@ -30,10 +35,15 @@ static portMUX_TYPE power_lock = portMUX_INITIALIZER_UNLOCKED;
 static uint32_t pending_first_audio_sequence;
 static bool audio_available;
 static bool audio_prepared;
+static bool companion_transport_started;
 static QueueHandle_t ui_state_queue;
 static StaticQueue_t ui_state_queue_storage;
 static uint8_t ui_state_queue_buffer[sizeof(cr_device_state_t)];
 static cr_device_state_t ui_state_snapshot;
+static QueueHandle_t micro_state_queue;
+static StaticQueue_t micro_state_queue_storage;
+static uint8_t micro_state_queue_buffer[sizeof(cr_micro_state_t)];
+static cr_micro_state_t micro_state_snapshot;
 
 static uint64_t now_ms(void)
 {
@@ -90,6 +100,70 @@ static void ui_shortcut(uint16_t session_key, uint8_t shortcut, void *context)
     }
 }
 
+static void ui_micro_agent_key(uint8_t agent_index, bool pressed, void *context)
+{
+    (void)context;
+    esp_err_t result = cr_codex_micro_hid_send_agent_key(agent_index, pressed);
+    if (result != ESP_OK) {
+        ESP_LOGW(TAG, "Codex Micro agent key unavailable: %s", esp_err_to_name(result));
+    }
+}
+
+static void refresh_connection_mode_ui(void)
+{
+    cr_ui_set_connection_mode(&connection_mode_state);
+}
+
+static void ui_request_connection_mode(cr_connection_mode_t mode, void *context)
+{
+    (void)context;
+    if (cr_connection_mode_request(&connection_mode_state, (uint8_t)mode)) {
+        refresh_connection_mode_ui();
+    }
+}
+
+static void ui_cancel_connection_mode(void *context)
+{
+    (void)context;
+    cr_connection_mode_cancel(&connection_mode_state);
+    refresh_connection_mode_ui();
+}
+
+static void stop_active_ptt_for_mode_change(void)
+{
+    if (audio_prepared) {
+        cr_audio_capture_discard();
+        audio_prepared = false;
+    }
+    if (!device_state.ptt_active) return;
+
+    uint32_t last_sequence = 0;
+    cr_audio_capture_stop(&last_sequence);
+    if (companion_transport_started) {
+        (void)cr_ble_send_ptt_end(device_state.selected_session_key, last_sequence);
+    }
+    device_state.ptt_active = false;
+}
+
+static void ui_confirm_connection_mode(void *context)
+{
+    (void)context;
+    cr_connection_mode_state_t previous = connection_mode_state;
+    stop_active_ptt_for_mode_change();
+    if (!cr_connection_mode_confirm(&connection_mode_state)) return;
+
+    esp_err_t result = cr_connection_mode_store_save(connection_mode_state.active);
+    if (result != ESP_OK) {
+        ESP_LOGE(TAG, "failed to save connection mode: %s", esp_err_to_name(result));
+        connection_mode_state = previous;
+        refresh_connection_mode_ui();
+        return;
+    }
+
+    ESP_LOGI(TAG, "connection mode saved; restarting");
+    esp_restart();
+}
+
 static void ble_state_changed(const cr_device_state_t *state, void *context)
 {
     (void)context;
@@ -118,12 +192,35 @@ static void ui_state_task(void *context)
     }
 }
 
+static void micro_state_changed(const cr_micro_state_t *state, void *context)
+{
+    (void)context;
+    xQueueOverwrite(micro_state_queue, state);
+}
+
+static void micro_state_task(void *context)
+{
+    (void)context;
+    while (true) {
+        if (xQueueReceive(
+                micro_state_queue, &micro_state_snapshot, portMAX_DELAY
+            ) != pdTRUE) continue;
+        if (esp_lv_adapter_lock(200) != ESP_OK) {
+            ESP_LOGW(TAG, "display busy while applying Codex Micro state");
+            continue;
+        }
+        cr_ui_update_micro(&micro_state_snapshot);
+        esp_lv_adapter_unlock();
+    }
+}
+
 static void execute_input_action(cr_input_action_t action)
 {
     if (action == CR_INPUT_WAKE) {
         note_interaction(NULL);
         return;
     }
+    if (!cr_connection_mode_can_accept_input(&connection_mode_state)) return;
     if (!device_state.has_selection) return;
     switch (action) {
     case CR_INPUT_PRE_ROLL_BEGIN:
@@ -203,6 +300,9 @@ static void button_task(void *context)
             .screen_on = true,
             .interaction_locked = device_state.ptt_active,
         };
+        if (!cr_connection_mode_can_accept_input(&connection_mode_state)) {
+            input_context.interaction_locked = true;
+        }
         portENTER_CRITICAL(&power_lock);
         input_context.screen_on = current_power_mode != CR_POWER_OFF;
         portEXIT_CRITICAL(&power_lock);
@@ -244,6 +344,13 @@ static void power_task(void *context)
 void app_main(void)
 {
     ESP_ERROR_CHECK(initialize_nvs());
+    cr_connection_mode_t stored_mode = CR_CONNECTION_MODE_UNCONFIGURED;
+    esp_err_t mode_result = cr_connection_mode_store_load(&stored_mode);
+    if (mode_result != ESP_OK) {
+        ESP_LOGE(TAG, "invalid connection mode configuration: %s", esp_err_to_name(mode_result));
+        stored_mode = CR_CONNECTION_MODE_UNCONFIGURED;
+    }
+    cr_connection_mode_init(&connection_mode_state, (uint8_t)stored_mode);
     cr_device_state_init(&device_state);
     cr_input_state_init(&input_state);
     cr_power_init(&power_state, now_ms());
@@ -255,17 +362,13 @@ void app_main(void)
         &ui_state_queue_storage
     );
     configASSERT(ui_state_queue != NULL);
-    cr_ble_config_t ble_config = {
-        .on_state_changed = ble_state_changed,
-    };
-    ESP_ERROR_CHECK(cr_ble_start(&device_state, &ble_config));
-
-    esp_err_t audio_result = cr_audio_capture_init();
-    audio_available = audio_result == ESP_OK;
-    if (!audio_available) {
-        ESP_LOGW(TAG, "microphone unavailable: %s", esp_err_to_name(audio_result));
-    }
-
+    micro_state_queue = xQueueCreateStatic(
+        1,
+        sizeof(cr_micro_state_t),
+        micro_state_queue_buffer,
+        &micro_state_queue_storage
+    );
+    configASSERT(micro_state_queue != NULL);
     if (cr_display_start() == NULL) {
         ESP_LOGE(TAG, "failed to initialize Waveshare display");
         return;
@@ -276,16 +379,51 @@ void app_main(void)
         .scroll = ui_scroll,
         .terminal_key = ui_key,
         .terminal_shortcut = ui_shortcut,
+        .micro_agent_key = ui_micro_agent_key,
+        .request_connection_mode = ui_request_connection_mode,
+        .confirm_connection_mode = ui_confirm_connection_mode,
+        .cancel_connection_mode = ui_cancel_connection_mode,
         .interaction = note_interaction,
     };
     cr_ui_init(&ui_callbacks);
-    cr_ui_update(&device_state);
+    if (connection_mode_state.active == CR_CONNECTION_MODE_NATIVE_MICRO) {
+        cr_micro_state_init(&micro_state_snapshot);
+        cr_ui_update_micro(&micro_state_snapshot);
+    } else {
+        cr_ui_update(&device_state);
+    }
+    refresh_connection_mode_ui();
     esp_lv_adapter_unlock();
 
-    ESP_ERROR_CHECK(
-        xTaskCreate(ui_state_task, "ui_state", 4096, NULL, 5, NULL) == pdPASS
-            ? ESP_OK : ESP_ERR_NO_MEM
-    );
+    if (connection_mode_state.active == CR_CONNECTION_MODE_MAC_COMPANION) {
+        cr_ble_config_t ble_config = {
+            .on_state_changed = ble_state_changed,
+        };
+        ESP_ERROR_CHECK(cr_ble_start(&device_state, &ble_config));
+        companion_transport_started = true;
+
+        esp_err_t audio_result = cr_audio_capture_init();
+        audio_available = audio_result == ESP_OK;
+        if (!audio_available) {
+            ESP_LOGW(TAG, "microphone unavailable: %s", esp_err_to_name(audio_result));
+        }
+
+        ESP_ERROR_CHECK(
+            xTaskCreate(ui_state_task, "ui_state", 4096, NULL, 5, NULL) == pdPASS
+                ? ESP_OK : ESP_ERR_NO_MEM
+        );
+    } else if (connection_mode_state.active == CR_CONNECTION_MODE_NATIVE_MICRO) {
+        ESP_ERROR_CHECK(
+            xTaskCreate(micro_state_task, "micro_ui", 4096, NULL, 5, NULL) == pdPASS
+                ? ESP_OK : ESP_ERR_NO_MEM
+        );
+        cr_codex_micro_hid_config_t hid_config = {
+            .on_state_changed = micro_state_changed,
+        };
+        ESP_ERROR_CHECK(cr_codex_micro_hid_start(&hid_config));
+    } else {
+        ESP_LOGI(TAG, "waiting for first connection mode selection; BLE is disabled");
+    }
 
     gpio_config_t button_config = {
         .pin_bit_mask = UINT64_C(1) << USER_BUTTON_GPIO,

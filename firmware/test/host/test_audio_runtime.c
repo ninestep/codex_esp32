@@ -56,7 +56,7 @@ int main(void)
     const char *display_init = strstr(app_source, "cr_display_start()");
     assert(audio_init != NULL);
     assert(display_init != NULL);
-    assert(audio_init < display_init);
+    assert(display_init < audio_init);
     assert(strstr(app_source, "if (cr_audio_capture_prepare(&pending_first_audio_sequence) != ESP_OK)") != NULL);
     assert(strstr(app_source, "if (cr_audio_capture_commit() != ESP_OK)") != NULL);
     assert(strstr(app_source, "cr_ble_send_ptt_end(device_state.selected_session_key, 0)") != NULL);

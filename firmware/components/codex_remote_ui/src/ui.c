@@ -19,6 +19,11 @@ static lv_obj_t *detail_page;
 static lv_obj_t *detail_content_page;
 static lv_obj_t *shortcut_page;
 static lv_obj_t *screensaver_page;
+static lv_obj_t *mode_page;
+static lv_obj_t *mode_choices;
+static lv_obj_t *mode_confirmation;
+static lv_obj_t *mode_confirmation_label;
+static lv_obj_t *home_heading;
 static lv_obj_t *connection_label;
 static lv_obj_t *detail_title;
 static lv_obj_t *detail_directory;
@@ -29,6 +34,7 @@ static card_view_t cards[CR_MAX_SESSIONS];
 static uint16_t selected_session_key;
 static bool interaction_locked;
 static bool shortcut_page_active;
+static bool micro_mode_active;
 
 static void note_interaction(void)
 {
@@ -69,6 +75,38 @@ static const char *state_text(uint8_t state)
     case 4: return "错误";
     default: return "离线";
     }
+}
+
+static uint32_t color_distance(uint32_t lhs, uint32_t rhs)
+{
+    int32_t red = (int32_t)((lhs >> 16) & 0xffU) - (int32_t)((rhs >> 16) & 0xffU);
+    int32_t green = (int32_t)((lhs >> 8) & 0xffU) - (int32_t)((rhs >> 8) & 0xffU);
+    int32_t blue = (int32_t)(lhs & 0xffU) - (int32_t)(rhs & 0xffU);
+    return (uint32_t)(red * red + green * green + blue * blue);
+}
+
+static uint8_t micro_light_state(const cr_micro_light_t *light)
+{
+    static const uint32_t reference_colors[] = {
+        UINT32_C(0xa1a1aa),
+        UINT32_C(0x3b82f6),
+        UINT32_C(0x22c55e),
+        UINT32_C(0xf59e0b),
+        UINT32_C(0xef4444),
+    };
+    if (!light->configured) return 5;
+    if (light->brightness == 0) return 0;
+
+    uint8_t nearest_state = 0;
+    uint32_t nearest_distance = color_distance(light->color, reference_colors[0]);
+    for (uint8_t state = 1; state < sizeof(reference_colors) / sizeof(reference_colors[0]); state++) {
+        uint32_t distance = color_distance(light->color, reference_colors[state]);
+        if (distance < nearest_distance) {
+            nearest_state = state;
+            nearest_distance = distance;
+        }
+    }
+    return nearest_state;
 }
 
 static lv_obj_t *make_button(lv_obj_t *parent, const char *text)
@@ -124,10 +162,24 @@ static void show_detail_content(void)
 static void card_clicked(lv_event_t *event)
 {
     note_interaction();
-    if (interaction_locked) return;
+    if (interaction_locked || micro_mode_active) return;
     card_view_t *card = lv_event_get_user_data(event);
     if (card->active && actions.select_session != NULL) {
         actions.select_session(card->session_key, actions.context);
+    }
+}
+
+static void micro_card_key(lv_event_t *event)
+{
+    if (!micro_mode_active || interaction_locked || actions.micro_agent_key == NULL) return;
+    card_view_t *card = lv_event_get_user_data(event);
+    uint8_t index = (uint8_t)(card - cards);
+    lv_event_code_t code = lv_event_get_code(event);
+    if (code == LV_EVENT_PRESSED) {
+        note_interaction();
+        actions.micro_agent_key(index, true, actions.context);
+    } else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
+        actions.micro_agent_key(index, false, actions.context);
     }
 }
 
@@ -210,6 +262,32 @@ static void screensaver_pressed(lv_event_t *event)
     note_interaction();
 }
 
+static void mode_requested(lv_event_t *event)
+{
+    note_interaction();
+    if (actions.request_connection_mode == NULL) return;
+    uintptr_t mode = (uintptr_t)lv_event_get_user_data(event);
+    actions.request_connection_mode((cr_connection_mode_t)mode, actions.context);
+}
+
+static void mode_confirmed(lv_event_t *event)
+{
+    (void)event;
+    note_interaction();
+    if (actions.confirm_connection_mode != NULL) {
+        actions.confirm_connection_mode(actions.context);
+    }
+}
+
+static void mode_cancelled(lv_event_t *event)
+{
+    (void)event;
+    note_interaction();
+    if (actions.cancel_connection_mode != NULL) {
+        actions.cancel_connection_mode(actions.context);
+    }
+}
+
 void cr_ui_init(const cr_ui_callbacks_t *config)
 {
     actions = *config;
@@ -222,9 +300,9 @@ void cr_ui_init(const cr_ui_callbacks_t *config)
     lv_obj_remove_style_all(home_page);
     lv_obj_set_size(home_page, LV_PCT(100), LV_PCT(100));
 
-    lv_obj_t *heading = lv_label_create(home_page);
-    lv_label_set_text(heading, "CODEX REMOTE");
-    lv_obj_align(heading, LV_ALIGN_TOP_LEFT, 18, 16);
+    home_heading = lv_label_create(home_page);
+    lv_label_set_text(home_heading, "CODEX REMOTE");
+    lv_obj_align(home_heading, LV_ALIGN_TOP_LEFT, 18, 16);
 
     connection_label = lv_label_create(home_page);
     lv_label_set_text(connection_label, "等待 Mac...");
@@ -250,6 +328,9 @@ void cr_ui_init(const cr_ui_callbacks_t *config)
         lv_obj_set_style_border_width(card->card, 2, 0);
         lv_obj_set_style_radius(card->card, 18, 0);
         lv_obj_add_event_cb(card->card, card_clicked, LV_EVENT_CLICKED, card);
+        lv_obj_add_event_cb(card->card, micro_card_key, LV_EVENT_PRESSED, card);
+        lv_obj_add_event_cb(card->card, micro_card_key, LV_EVENT_RELEASED, card);
+        lv_obj_add_event_cb(card->card, micro_card_key, LV_EVENT_PRESS_LOST, card);
 
         card->status = lv_label_create(card->card);
         lv_obj_align(card->status, LV_ALIGN_TOP_RIGHT, 0, 0);
@@ -359,10 +440,54 @@ void cr_ui_init(const cr_ui_callbacks_t *config)
     lv_obj_set_style_text_color(saver_subtitle, lv_color_hex(0x71717a), 0);
     lv_obj_align(saver_subtitle, LV_ALIGN_CENTER, 0, 32);
     lv_obj_add_flag(screensaver_page, LV_OBJ_FLAG_HIDDEN);
+
+    mode_page = lv_obj_create(screen);
+    lv_obj_remove_style_all(mode_page);
+    lv_obj_set_size(mode_page, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_style_bg_color(mode_page, lv_color_hex(0x09090b), 0);
+    lv_obj_set_style_bg_opa(mode_page, LV_OPA_COVER, 0);
+
+    lv_obj_t *mode_title = lv_label_create(mode_page);
+    lv_label_set_text(mode_title, "CONNECTION MODE");
+    lv_obj_align(mode_title, LV_ALIGN_TOP_MID, 0, 54);
+
+    mode_choices = lv_obj_create(mode_page);
+    lv_obj_remove_style_all(mode_choices);
+    lv_obj_set_size(mode_choices, 420, 260);
+    lv_obj_align(mode_choices, LV_ALIGN_CENTER, 0, 28);
+    make_positioned_button(
+        mode_choices, "CODEX MICRO", 30, 24, 360, 82,
+        mode_requested, (void *)(uintptr_t)CR_CONNECTION_MODE_NATIVE_MICRO
+    );
+    make_positioned_button(
+        mode_choices, "MAC APP", 30, 142, 360, 82,
+        mode_requested, (void *)(uintptr_t)CR_CONNECTION_MODE_MAC_COMPANION
+    );
+
+    mode_confirmation = lv_obj_create(mode_page);
+    lv_obj_remove_style_all(mode_confirmation);
+    lv_obj_set_size(mode_confirmation, 420, 260);
+    lv_obj_align(mode_confirmation, LV_ALIGN_CENTER, 0, 28);
+    mode_confirmation_label = lv_label_create(mode_confirmation);
+    lv_obj_set_width(mode_confirmation_label, 390);
+    lv_obj_set_style_text_align(mode_confirmation_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(mode_confirmation_label, LV_ALIGN_TOP_MID, 0, 48);
+    make_positioned_button(
+        mode_confirmation, "取消", 40, 156, 150, 62,
+        mode_cancelled, NULL
+    );
+    make_positioned_button(
+        mode_confirmation, "确认", 230, 156, 150, 62,
+        mode_confirmed, NULL
+    );
+    lv_obj_add_flag(mode_confirmation, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(mode_page, LV_OBJ_FLAG_HIDDEN);
 }
 
 void cr_ui_update(const cr_device_state_t *state)
 {
+    micro_mode_active = false;
+    lv_label_set_text(home_heading, "CODEX REMOTE");
     interaction_locked = state->ptt_active;
     lv_label_set_text(connection_label, state->has_snapshot ? "Mac 已连接" : "等待 Mac...");
     for (size_t index = 0; index < CR_MAX_SESSIONS; index++) {
@@ -375,6 +500,10 @@ void cr_ui_update(const cr_device_state_t *state)
         const cr_device_session_t *session = &state->sessions[index];
         card->active = true;
         card->session_key = session->session_key;
+        lv_obj_set_size(card->card, 214, 184);
+        lv_obj_set_pos(card->card, (index % 2) * 224, (index / 2) * 194);
+        lv_obj_align(card->title, LV_ALIGN_TOP_LEFT, 0, 38);
+        lv_obj_remove_flag(card->directory, LV_OBJ_FLAG_HIDDEN);
         lv_label_set_text(card->title, session->display_title);
         lv_label_set_text(card->directory, session->working_directory_label);
         lv_label_set_text(card->status, state_text(session->state));
@@ -411,6 +540,76 @@ void cr_ui_update(const cr_device_state_t *state)
         lv_obj_remove_flag(detail_page, LV_OBJ_FLAG_HIDDEN);
         return;
     }
+}
+
+void cr_ui_update_micro(const cr_micro_state_t *state)
+{
+    if (state == NULL) return;
+    micro_mode_active = true;
+    interaction_locked = false;
+    selected_session_key = 0;
+    show_detail_content();
+    lv_obj_add_flag(detail_page, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_remove_flag(home_page, LV_OBJ_FLAG_HIDDEN);
+    lv_label_set_text(home_heading, "CODEX MICRO");
+    lv_label_set_text(
+        connection_label,
+        state->connected ? "Codex 已连接" : "等待 Codex..."
+    );
+
+    for (size_t index = 0; index < CR_MAX_SESSIONS; index++) {
+        card_view_t *card = &cards[index];
+        if (index >= CR_MICRO_SLOT_COUNT) {
+            card->active = false;
+            lv_obj_add_flag(card->card, LV_OBJ_FLAG_HIDDEN);
+            continue;
+        }
+
+        const cr_micro_light_t *slot = &state->slots[index];
+        uint8_t slot_state = micro_light_state(slot);
+        card->active = true;
+        card->session_key = (uint16_t)(index + 1);
+        lv_obj_set_size(card->card, 214, 116);
+        lv_obj_set_pos(card->card, (index % 2) * 224, (index / 2) * 126);
+        lv_obj_align(card->title, LV_ALIGN_BOTTOM_LEFT, 0, -4);
+        lv_obj_add_flag(card->directory, LV_OBJ_FLAG_HIDDEN);
+        lv_label_set_text_fmt(card->title, "AGENT %u", (unsigned)(index + 1));
+        lv_label_set_text(card->status, state_text(slot_state));
+        if (!slot->configured) {
+            lv_obj_set_style_bg_color(card->card, lv_color_hex(0x18181b), 0);
+            lv_obj_set_style_border_color(card->card, lv_color_hex(0x52525b), 0);
+            lv_obj_set_style_text_color(card->status, lv_color_hex(0xa1a1aa), 0);
+        } else {
+            lv_color_t color = lv_color_hex(slot->color);
+            lv_obj_set_style_bg_color(card->card, lv_color_mix(color, lv_color_hex(0x09090b), 96), 0);
+            lv_obj_set_style_border_color(card->card, color, 0);
+            lv_obj_set_style_text_color(card->status, color, 0);
+        }
+        lv_obj_remove_flag(card->card, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+void cr_ui_set_connection_mode(const cr_connection_mode_state_t *state)
+{
+    if (state == NULL) return;
+    if (state->active != CR_CONNECTION_MODE_UNCONFIGURED
+        && !state->confirmation_required) {
+        lv_obj_add_flag(mode_page, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+
+    lv_obj_remove_flag(mode_page, LV_OBJ_FLAG_HIDDEN);
+    if (!state->confirmation_required) {
+        lv_obj_remove_flag(mode_choices, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(mode_confirmation, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+
+    const char *mode_name = state->pending == CR_CONNECTION_MODE_NATIVE_MICRO
+        ? "CODEX MICRO" : "MAC APP";
+    lv_label_set_text_fmt(mode_confirmation_label, "USE %s?\nDEVICE WILL RESTART", mode_name);
+    lv_obj_add_flag(mode_choices, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_remove_flag(mode_confirmation, LV_OBJ_FLAG_HIDDEN);
 }
 
 void cr_ui_set_power(cr_power_mode_t mode, size_t asset_index)
