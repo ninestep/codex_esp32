@@ -284,6 +284,13 @@ static void micro_state_task(void *context)
                     || status_time_ms < micro_notifications_arm_at_ms
                     || current_statuses[index] == previous_micro_statuses[index]) continue;
                 status_changed = true;
+                ESP_LOGI(
+                    TAG,
+                    "agent %u status %u -> %u",
+                    (unsigned)(index + 1),
+                    (unsigned)previous_micro_statuses[index],
+                    (unsigned)current_statuses[index]
+                );
                 if (current_statuses[index] == CR_MICRO_AGENT_REQUIRES_INPUT) {
                     alert = CR_AUDIO_ALERT_REQUIRES_INPUT;
                     play_alert = true;

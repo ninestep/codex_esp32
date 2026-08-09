@@ -18,7 +18,7 @@
 #define PRE_ROLL_FRAME_COUNT 20
 #define AUDIO_CHANNEL_COUNT 2
 #define MICROPHONE_GAIN_DB 30.0f
-#define SPEAKER_VOLUME 55
+#define SPEAKER_VOLUME 80
 #define ALERT_CHUNK_SAMPLES 160
 
 typedef enum {
@@ -107,7 +107,7 @@ static bool play_tone(uint16_t frequency_hz, uint16_t duration_ms)
         if (!alert_can_continue()) return false;
         size_t samples = remaining < ALERT_CHUNK_SAMPLES ? remaining : ALERT_CHUNK_SAMPLES;
         for (size_t index = 0; index < samples; index++) {
-            int16_t sample = sine_table[(phase / UINT32_C(16000)) & UINT32_C(31)];
+            int16_t sample = (int16_t)(sine_table[(phase / UINT32_C(16000)) & UINT32_C(31)] * 2);
             phase += phase_step;
             alert_pcm_buffer[index * 2] = sample;
             alert_pcm_buffer[index * 2 + 1] = sample;
@@ -142,12 +142,16 @@ static void alert_task(void *context)
     while (true) {
         if (xQueueReceive(alert_queue, &alert, portMAX_DELAY) != pdTRUE) continue;
         if (!alert_can_continue()) continue;
+        ESP_LOGI(TAG, "playing %s alert", alert == CR_AUDIO_ALERT_COMPLETED
+            ? "completed" : "requires-input");
+        bool played;
         if (alert == CR_AUDIO_ALERT_COMPLETED) {
-            (void)(play_tone(660, 90) && play_silence(45) && play_tone(880, 150));
+            played = play_tone(660, 90) && play_silence(45) && play_tone(880, 150);
         } else {
-            (void)(play_tone(880, 80) && play_silence(35)
-                && play_tone(660, 80) && play_silence(35) && play_tone(880, 110));
+            played = play_tone(880, 80) && play_silence(35)
+                && play_tone(660, 80) && play_silence(35) && play_tone(880, 110);
         }
+        ESP_LOGI(TAG, "alert playback %s", played ? "completed" : "interrupted");
     }
 }
 
