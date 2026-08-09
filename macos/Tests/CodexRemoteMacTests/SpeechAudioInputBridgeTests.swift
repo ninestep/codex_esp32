@@ -92,6 +92,48 @@ final class SpeechAudioInputBridgeTests: XCTestCase {
         XCTAssertThrowsError(try bridge.receive(makeFrame(sequence: 1)))
     }
 
+    func testActivityTracksRecordingLevelProcessingAndIdle() async throws {
+        let session = RecordingSpeechSession(finalText: "完整结果")
+        var activities: [SpeechAudioActivity] = []
+        let bridge = SpeechAudioInputBridge(
+            sessionFactory: RecordingSpeechSessionFactory(session: session),
+            textEmitter: RecordingRecognizedTextEmitter(),
+            activityHandler: { activities.append($0) }
+        )
+        let frame = try IMAADPCMCodec().encode(
+            samples: Array(repeating: Int16(12_000), count: IMAADPCMCodec.samplesPerFrame),
+            sequence: 1,
+            sampleTimestamp: 0
+        )
+
+        try bridge.begin(firstAudioSequence: 1)
+        try bridge.receive(frame)
+        try await bridge.end(lastAudioSequence: 1)
+
+        XCTAssertEqual(activities.first?.phase, .recording)
+        XCTAssertEqual(activities.first?.level, 0)
+        XCTAssertEqual(activities.first?.waveform.count, 21)
+        XCTAssertTrue(activities.contains { $0.phase == .recording && $0.level > 0.5 })
+        XCTAssertTrue(activities.contains { $0.waveform.contains(where: { $0 > 0.5 }) })
+        XCTAssertTrue(activities.contains(SpeechAudioActivity(phase: .processing, level: 0)))
+        XCTAssertEqual(activities.last, .idle)
+    }
+
+    func testAbortResetsVisibleActivityToIdle() throws {
+        let session = RecordingSpeechSession(finalText: "")
+        var activities: [SpeechAudioActivity] = []
+        let bridge = SpeechAudioInputBridge(
+            sessionFactory: RecordingSpeechSessionFactory(session: session),
+            textEmitter: RecordingRecognizedTextEmitter(),
+            activityHandler: { activities.append($0) }
+        )
+
+        try bridge.begin(firstAudioSequence: 1)
+        bridge.abort()
+
+        XCTAssertEqual(activities.last, .idle)
+    }
+
     private func makeFrame(sequence: UInt32) throws -> ADPCMFrame {
         try IMAADPCMCodec().encode(
             samples: Array(repeating: Int16(1200), count: IMAADPCMCodec.samplesPerFrame),

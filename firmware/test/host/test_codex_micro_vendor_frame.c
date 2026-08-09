@@ -55,6 +55,21 @@ static void test_keyboard_actions_encode_exact_reports(void)
     assert(sequence.reports[1][0] == 0 && sequence.reports[1][2] == 0);
     assert(sequence.reports[2][0] == 0 && sequence.reports[2][2] == 0x2a);
     assert(sequence.reports[3][0] == 0 && sequence.reports[3][2] == 0);
+
+    assert(cr_micro_keyboard_action_encode(
+        CR_MICRO_KEYBOARD_ENTER, &sequence
+    ) == CR_MICRO_FRAME_OK);
+    assert(sequence.count == 2);
+    assert(sequence.reports[0][0] == 0 && sequence.reports[0][2] == 0x28);
+    assert(sequence.reports[1][0] == 0 && sequence.reports[1][2] == 0);
+
+    assert(cr_micro_keyboard_action_encode(
+        CR_MICRO_KEYBOARD_ESCAPE, &sequence
+    ) == CR_MICRO_FRAME_OK);
+    assert(sequence.count == 2);
+    assert(sequence.reports[0][0] == 0 && sequence.reports[0][2] == 0x29);
+    assert(sequence.reports[1][0] == 0 && sequence.reports[1][2] == 0);
+
     assert(cr_micro_keyboard_action_encode(
         (cr_micro_keyboard_action_t)99, &sequence
     ) == CR_MICRO_FRAME_INVALID_ARGUMENT);

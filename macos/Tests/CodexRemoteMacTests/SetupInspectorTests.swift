@@ -94,7 +94,9 @@ final class SetupInspectorTests: XCTestCase {
         let sourceURL = macosRoot.appendingPathComponent("Sources/CodexRemoteApp/AppModel.swift")
         let source = try String(contentsOf: sourceURL, encoding: .utf8)
 
-        XCTAssertTrue(source.contains("bluetoothConnectionStatus.update(snapshot.transportState)"))
+        XCTAssertTrue(
+            source.contains("bluetoothConnectionStatus.update(companionSnapshot.transportState)")
+        )
         XCTAssertTrue(source.contains("esp32ConnectedReader: esp32ConnectedReader"))
     }
 

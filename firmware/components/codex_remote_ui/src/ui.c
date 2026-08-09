@@ -1,4 +1,5 @@
 #include "codex_remote/ui.h"
+#include "codex_micro/agent_status.h"
 
 #include "lvgl.h"
 
@@ -45,6 +46,7 @@ static lv_obj_t *page_toggle;
 static lv_obj_t *page_toggle_label;
 static card_view_t cards[CR_MAX_SESSIONS];
 static uint16_t selected_session_key;
+static uint16_t suppressed_session_key;
 static bool interaction_locked;
 static bool shortcut_page_active;
 static bool micro_mode_active;
@@ -97,36 +99,9 @@ static const char *state_text(uint8_t state)
     }
 }
 
-static uint32_t color_distance(uint32_t lhs, uint32_t rhs)
-{
-    int32_t red = (int32_t)((lhs >> 16) & 0xffU) - (int32_t)((rhs >> 16) & 0xffU);
-    int32_t green = (int32_t)((lhs >> 8) & 0xffU) - (int32_t)((rhs >> 8) & 0xffU);
-    int32_t blue = (int32_t)(lhs & 0xffU) - (int32_t)(rhs & 0xffU);
-    return (uint32_t)(red * red + green * green + blue * blue);
-}
-
 static uint8_t micro_light_state(const cr_micro_light_t *light)
 {
-    static const uint32_t reference_colors[] = {
-        UINT32_C(0xa1a1aa),
-        UINT32_C(0x3b82f6),
-        UINT32_C(0x22c55e),
-        UINT32_C(0xf59e0b),
-        UINT32_C(0xef4444),
-    };
-    if (!light->configured) return 5;
-    if (light->brightness == 0) return 0;
-
-    uint8_t nearest_state = 0;
-    uint32_t nearest_distance = color_distance(light->color, reference_colors[0]);
-    for (uint8_t state = 1; state < sizeof(reference_colors) / sizeof(reference_colors[0]); state++) {
-        uint32_t distance = color_distance(light->color, reference_colors[state]);
-        if (distance < nearest_distance) {
-            nearest_state = state;
-            nearest_distance = distance;
-        }
-    }
-    return nearest_state;
+    return (uint8_t)cr_micro_agent_status(light);
 }
 
 static lv_obj_t *make_button(lv_obj_t *parent, const char *text)
@@ -202,6 +177,7 @@ static void card_clicked(lv_event_t *event)
         return;
     }
     if (card->active && actions.select_session != NULL) {
+        suppressed_session_key = 0;
         actions.select_session(card->session_key, actions.context);
     }
 }
@@ -418,6 +394,8 @@ static void back_clicked(lv_event_t *event)
     (void)event;
     note_interaction();
     if (interaction_locked) return;
+    suppressed_session_key = selected_session_key;
+    selected_session_key = 0;
     show_detail_content();
     lv_obj_add_flag(detail_page, LV_OBJ_FLAG_HIDDEN);
     lv_obj_remove_flag(home_page, LV_OBJ_FLAG_HIDDEN);
@@ -856,13 +834,14 @@ void cr_ui_update(const cr_device_state_t *state)
         lv_obj_remove_flag(card->card, LV_OBJ_FLAG_HIDDEN);
     }
 
-    if (!state->has_selection) {
+    if (!state->has_selection || state->selected_session_key == suppressed_session_key) {
         selected_session_key = 0;
         show_detail_content();
         lv_obj_add_flag(detail_page, LV_OBJ_FLAG_HIDDEN);
         lv_obj_remove_flag(home_page, LV_OBJ_FLAG_HIDDEN);
         return;
     }
+    suppressed_session_key = 0;
     for (size_t index = 0; index < state->session_count; index++) {
         const cr_device_session_t *session = &state->sessions[index];
         if (session->session_key != state->selected_session_key) continue;
@@ -991,4 +970,35 @@ void cr_ui_set_power(cr_power_mode_t mode, size_t asset_index)
     } else {
         lv_obj_add_flag(screensaver_page, LV_OBJ_FLAG_HIDDEN);
     }
+}
+
+bool cr_ui_is_detail_active(void)
+{
+    return micro_mode_active
+        ? micro_action_page_active
+        : !lv_obj_has_flag(detail_page, LV_OBJ_FLAG_HIDDEN);
+}
+
+bool cr_ui_return_to_list(void)
+{
+    if (!cr_ui_is_detail_active() || interaction_locked
+        || pressed_micro_control >= 0 || pressed_micro_direction >= 0
+        || pressed_micro_encoder) return false;
+
+    if (micro_mode_active) {
+        micro_action_page_active = false;
+        selected_micro_agent = UINT8_MAX;
+        micro_view = MICRO_VIEW_ACTIONS;
+        lv_obj_remove_flag(micro_action_menu, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(micro_encoder_panel, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(micro_joystick_panel, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(micro_action_page, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        suppressed_session_key = selected_session_key;
+        selected_session_key = 0;
+        show_detail_content();
+        lv_obj_add_flag(detail_page, LV_OBJ_FLAG_HIDDEN);
+    }
+    lv_obj_remove_flag(home_page, LV_OBJ_FLAG_HIDDEN);
+    return true;
 }

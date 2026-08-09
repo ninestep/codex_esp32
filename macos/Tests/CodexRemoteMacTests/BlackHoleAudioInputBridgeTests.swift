@@ -8,10 +8,10 @@ final class BlackHoleAudioInputBridgeTests: XCTestCase {
     func testBlackHoleOutputGainAmplifiesSpeechAndClipsSafely() {
         let gain = BlackHoleOutputGain()
 
-        XCTAssertEqual(gain.apply(to: 232), 5_568)
-        XCTAssertEqual(gain.apply(to: -232), -5_568)
-        XCTAssertEqual(gain.apply(to: 2_000), Int16.max)
-        XCTAssertEqual(gain.apply(to: -2_000), Int16.min)
+        XCTAssertEqual(gain.apply(to: 232), 1_856)
+        XCTAssertEqual(gain.apply(to: -232), -1_856)
+        XCTAssertEqual(gain.apply(to: 5_000), Int16.max)
+        XCTAssertEqual(gain.apply(to: -5_000), Int16.min)
     }
 
     func testAudioSignalDiagnosticsMeasurePeakAndRMSWithoutStoringSamples() {

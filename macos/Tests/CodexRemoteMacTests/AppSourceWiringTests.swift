@@ -126,9 +126,16 @@ final class AppSourceWiringTests: XCTestCase {
         XCTAssertTrue(source.contains("isNotifying: characteristic.isNotifying"))
         XCTAssertTrue(source.contains("case let .read(role)"))
         XCTAssertTrue(source.contains("peripheral?.readValue(for: characteristic)"))
+        XCTAssertTrue(source.contains("retrieveConnectedPeripherals("))
+        XCTAssertTrue(source.contains("scanRetryTask"))
+        XCTAssertTrue(source.contains("Task.sleep(for: .seconds(1))"))
+        XCTAssertTrue(source.contains("self.state == .scanning"))
+        XCTAssertTrue(source.contains("CBUUID(string: \"1812\")"))
+        XCTAssertTrue(source.contains("hidDeviceName = \"Codex Micro\""))
+        XCTAssertTrue(source.contains("withServices: [BluetoothUUIDs.service]"))
     }
 
-    func testSettingsDescribeNativeSpeechWithoutDoubaoShortcutSetup() throws {
+    func testSettingsDescribeDirectDoubaoRecognitionWithoutShortcutSetup() throws {
         let macosRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
@@ -141,9 +148,53 @@ final class AppSourceWiringTests: XCTestCase {
                 contentsOf: macosRoot.appendingPathComponent(relativePath),
                 encoding: .utf8
             )
-            XCTAssertTrue(source.contains("原生") || source.contains("设备的语音键"), relativePath)
+            XCTAssertTrue(source.contains("豆包") || source.contains("设备的语音键"), relativePath)
             XCTAssertFalse(source.contains("豆包快捷键"), relativePath)
             XCTAssertFalse(source.contains("HotkeyRecorderField"), relativePath)
         }
+    }
+
+    func testEnhancedRuntimeUsesDoubaoSpeechSessionAndFocusedKeyboardEmitter() throws {
+        let macosRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let appModelSource = try String(
+            contentsOf: macosRoot.appendingPathComponent(
+                "Sources/CodexRemoteApp/AppModel.swift"
+            ),
+            encoding: .utf8
+        )
+        let settingsSource = try String(
+            contentsOf: macosRoot.appendingPathComponent("Sources/CodexRemoteApp/SettingsView.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(
+            appModelSource.contains("DoubaoSpeechRecognitionSessionFactory()")
+        )
+        XCTAssertTrue(appModelSource.contains("CGEventRecognizedTextEmitter()"))
+        XCTAssertTrue(settingsSource.contains("登录豆包"))
+        XCTAssertFalse(settingsSource.contains("微信输入法"))
+    }
+
+    func testEnhancedRuntimeDoesNotStartLegacySessionOrIPCServices() throws {
+        let macosRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let source = try String(
+            contentsOf: macosRoot.appendingPathComponent("Sources/CodexRemoteApp/AppModel.swift"),
+            encoding: .utf8
+        )
+        let startBody = try XCTUnwrap(
+            source.split(separator: "func start() async {", maxSplits: 1).last?
+                .split(separator: "func saveSettings()", maxSplits: 1).first
+        )
+
+        XCTAssertTrue(startBody.contains("CompanionAudioCoordinator(audioInput: audioInput)"))
+        XCTAssertFalse(startBody.contains("SessionService()"))
+        XCTAssertFalse(startBody.contains("UnixSocketIPCServer"))
+        XCTAssertFalse(startBody.contains("HookEventQueue"))
     }
 }

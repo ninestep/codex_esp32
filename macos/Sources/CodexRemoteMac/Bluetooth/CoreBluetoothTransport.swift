@@ -17,6 +17,7 @@ public final class CoreBluetoothTransport: NSObject, BluetoothTransport {
     private var discoveredPeripherals: [String: CBPeripheral] = [:]
     private var characteristics: [BluetoothCharacteristic: CBCharacteristic] = [:]
     private var pendingSubscriptionResets: Set<BluetoothCharacteristic> = []
+    private var scanRetryTask: Task<Void, Never>?
     private var stateMachine = BluetoothTransportStateMachine()
 
     public override init() {
@@ -29,6 +30,8 @@ public final class CoreBluetoothTransport: NSObject, BluetoothTransport {
     }
 
     public func stop() {
+        scanRetryTask?.cancel()
+        scanRetryTask = nil
         central.stopScan()
         if let peripheral {
             central.cancelPeripheralConnection(peripheral)
@@ -57,8 +60,10 @@ public final class CoreBluetoothTransport: NSObject, BluetoothTransport {
         for action in actions {
             switch action {
             case .startScan:
-                central.scanForPeripherals(withServices: [BluetoothUUIDs.service])
+                startScanning()
             case .stopScan:
+                scanRetryTask?.cancel()
+                scanRetryTask = nil
                 central.stopScan()
             case let .connect(id):
                 if let target = discoveredPeripherals[id] {
@@ -97,6 +102,35 @@ public final class CoreBluetoothTransport: NSObject, BluetoothTransport {
             }
         }
         onStateChange?(stateMachine.state)
+    }
+
+    private func startScanning() {
+        scanRetryTask?.cancel()
+        scanRetryTask = nil
+
+        let connectedCompanions = central.retrieveConnectedPeripherals(
+            withServices: [BluetoothUUIDs.service]
+        )
+        let connectedHIDDevices = central.retrieveConnectedPeripherals(
+            withServices: [BluetoothUUIDs.hidService]
+        )
+        let target = connectedCompanions.first
+            ?? connectedHIDDevices.first(where: { $0.name == BluetoothUUIDs.hidDeviceName })
+        if let target {
+            let id = target.identifier.uuidString
+            discoveredPeripherals[id] = target
+            execute(stateMachine.handle(.discoveredDevice(id: id)))
+            return
+        }
+
+        if !central.isScanning {
+            central.scanForPeripherals(withServices: [BluetoothUUIDs.service])
+        }
+        scanRetryTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled, let self, self.state == .scanning else { return }
+            self.startScanning()
+        }
     }
 
     private func map(_ state: CBManagerState) -> BluetoothCentralAvailability {
@@ -208,6 +242,9 @@ extension CoreBluetoothTransport: @preconcurrency CBPeripheralDelegate {
 }
 
 private extension BluetoothUUIDs {
+    static let hidService = CBUUID(string: "1812")
+    static let hidDeviceName = "Codex Micro"
+
     static var characteristics: [CBUUID] {
         [controlToHost, controlToDevice, stateToDevice, audioToHost, assetToDevice, deviceInfo]
     }

@@ -49,11 +49,21 @@ struct SettingsView: View {
             }
 
             Section("语音输入") {
-                Text("按住 ESP32 设备的语音键说话，松开后识别文本会输入到当前焦点。")
+                Text("按住 ESP32 设备的语音键说话，音频直接发送到豆包语音识别；松开后将结果写入 ChatGPT 输入框。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Text(model.audioReadinessText)
                     .foregroundStyle(.secondary)
+                HStack {
+                    Button(model.doubaoLoginState == .ready ? "重新登录豆包…" : "登录豆包…") {
+                        model.showDoubaoLogin()
+                    }
+                    if model.doubaoLoginState == .ready {
+                        Button("退出豆包登录", role: .destructive) {
+                            model.logoutDoubao()
+                        }
+                    }
+                }
                 Button("授权辅助功能…") { model.requestAccessibilityPermission() }
                     .disabled(model.isSetupBusy)
                 Text("Codex CLI 路径保存后立即生效；Socket 设置将在下次启动时生效。")

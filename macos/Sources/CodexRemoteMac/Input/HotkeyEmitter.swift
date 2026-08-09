@@ -41,11 +41,6 @@ public struct HotkeyParser: Sendable {
     public func parseRequired(_ value: String) throws -> ParsedHotkey {
         let tokens = tokenize(value)
         guard !tokens.isEmpty else { throw HotkeyParseError.empty }
-        let compactValue = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if compactValue.contains("fn") {
-            throw HotkeyParseError.functionKeyUnsupported
-        }
-
         var flags: CGEventFlags = []
         var modifierDisplays = Set<String>()
         var mainKey: (code: CGKeyCode, display: String)?
@@ -70,15 +65,18 @@ public struct HotkeyParser: Sendable {
         }
 
         guard !modifierDisplays.isEmpty else { throw HotkeyParseError.missingModifier }
-        let displayModifiers = ["⌘", "⌥", "⌃", "⇧"].filter { modifierDisplays.contains($0) }.joined()
+        let displayModifiers = ["⌘", "⌥", "⌃", "⇧", "Fn"]
+            .filter { modifierDisplays.contains($0) }
+            .joined()
         guard let mainKey else {
-            guard modifierDisplays.count >= 2,
-                  !modifierDisplays.contains("⇧"),
+            let isFunctionOnly = modifierDisplays == Set(["Fn"])
+            guard (modifierDisplays.count >= 2 || isFunctionOnly),
+                  (!modifierDisplays.contains("⇧") || isFunctionOnly),
                   displayModifiers.last != nil
             else {
                 throw HotkeyParseError.missingKey
             }
-            let orderedModifiers = ["⌘", "⌥", "⌃"].filter { modifierDisplays.contains($0) }
+            let orderedModifiers = ["⌘", "⌥", "⌃", "Fn"].filter { modifierDisplays.contains($0) }
             var activeFlags: CGEventFlags = []
             let keyDownEvents = orderedModifiers.map { display in
                 let modifier = modifierDetails(for: display)!
@@ -135,6 +133,7 @@ public struct HotkeyParser: Sendable {
         case "⌘": (55, .maskCommand, CGEventFlags(rawValue: 0x00000008))
         case "⌥": (58, .maskAlternate, CGEventFlags(rawValue: 0x00000020))
         case "⌃": (59, .maskControl, CGEventFlags(rawValue: 0x00000001))
+        case "Fn": (63, .maskSecondaryFn, [])
         default: nil
         }
     }
@@ -177,6 +176,8 @@ public struct HotkeyParser: Sendable {
             return ("⌃", .maskControl)
         case "⇧", "shift":
             return ("⇧", .maskShift)
+        case "fn", "function":
+            return ("Fn", .maskSecondaryFn)
         default:
             return nil
         }

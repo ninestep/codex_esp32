@@ -132,9 +132,20 @@ final class HotkeyTesterTests: XCTestCase {
         XCTAssertThrowsError(try parser.parseRequired("⌘⇧")) { error in
             XCTAssertEqual(error as? HotkeyParseError, .missingKey)
         }
-        XCTAssertThrowsError(try parser.parseRequired("Fn")) { error in
-            XCTAssertEqual(error as? HotkeyParseError, .functionKeyUnsupported)
-        }
+        let functionHotkey = try parser.parseRequired("Fn")
+        XCTAssertEqual(functionHotkey.displayValue, "Fn")
+        XCTAssertTrue(functionHotkey.requiresHoldMode)
+        XCTAssertEqual(functionHotkey.keyDownEvents, [
+            SyntheticHotkeyEvent(
+                keyCode: 63,
+                keyDown: true,
+                type: .flagsChanged,
+                flags: .maskSecondaryFn
+            ),
+        ])
+        XCTAssertEqual(functionHotkey.keyUpEvents, [
+            SyntheticHotkeyEvent(keyCode: 63, keyDown: false, type: .flagsChanged, flags: []),
+        ])
         XCTAssertThrowsError(try parser.parseRequired("⌘ F13")) { error in
             XCTAssertEqual(error as? HotkeyParseError, .unknownToken("F13"))
         }
@@ -144,8 +155,8 @@ final class HotkeyTesterTests: XCTestCase {
         XCTAssertThrowsError(try parser.parseRequired("⌘ ⌘ A")) { error in
             XCTAssertEqual(error as? HotkeyParseError, .duplicateModifier("⌘"))
         }
-        XCTAssertNil(parser.parse("Fn"))
-        XCTAssertNil(parser.parse("⌘Fn"))
+        XCTAssertNotNil(parser.parse("Fn"))
+        XCTAssertNotNil(parser.parse("⌘Fn"))
         XCTAssertNil(parser.parse("Fn+A"))
         XCTAssertNil(parser.parse("⌘ A B"))
     }

@@ -2,6 +2,7 @@ import AVFoundation
 import ApplicationServices
 import CodexRemoteCore
 import Foundation
+import OSLog
 import Speech
 
 public enum SpeechRecognitionAuthorization {
@@ -32,7 +33,12 @@ public protocol SpeechRecognitionSession: AnyObject {
 
 @MainActor
 public protocol SpeechRecognitionSessionFactory: AnyObject {
+    var dependencyStatus: AudioDependencyStatus { get }
     func makeSession() throws -> any SpeechRecognitionSession
+}
+
+public extension SpeechRecognitionSessionFactory {
+    var dependencyStatus: AudioDependencyStatus { .ready }
 }
 
 @MainActor
@@ -40,28 +46,57 @@ public protocol RecognizedTextEmitting: AnyObject {
     func emit(text: String) throws
 }
 
+public enum SpeechAudioActivityPhase: Equatable, Sendable {
+    case idle
+    case recording
+    case processing
+}
+
+public struct SpeechAudioActivity: Equatable, Sendable {
+    public let phase: SpeechAudioActivityPhase
+    public let level: Double
+    public let waveform: [Double]
+
+    public init(phase: SpeechAudioActivityPhase, level: Double, waveform: [Double] = []) {
+        self.phase = phase
+        self.level = min(max(level, 0), 1)
+        self.waveform = waveform.map { min(max($0, 0), 1) }
+    }
+
+    public static let idle = SpeechAudioActivity(phase: .idle, level: 0)
+}
+
 @MainActor
 public final class SpeechAudioInputBridge: AudioInputHandling {
-    public let dependencyStatus: AudioDependencyStatus = .ready
+    private static let logger = Logger(subsystem: "CodexRemote", category: "SpeechAudioInput")
+    public var dependencyStatus: AudioDependencyStatus { sessionFactory.dependencyStatus }
 
     private let sessionFactory: any SpeechRecognitionSessionFactory
     private let textEmitter: any RecognizedTextEmitting
+    private let activityHandler: (SpeechAudioActivity) -> Void
     private let codec = IMAADPCMCodec()
     private var session: (any SpeechRecognitionSession)?
     private var expectedSequence: UInt32?
+    private var smoothedAudioLevel = 0.0
+    private var smoothedWaveform = Array(repeating: 0.0, count: 21)
 
     public init(
         sessionFactory: any SpeechRecognitionSessionFactory = NativeSpeechRecognitionSessionFactory(),
-        textEmitter: any RecognizedTextEmitting = CGEventRecognizedTextEmitter()
+        textEmitter: any RecognizedTextEmitting = ChatGPTComposerTextEmitter(),
+        activityHandler: @escaping (SpeechAudioActivity) -> Void = { _ in }
     ) {
         self.sessionFactory = sessionFactory
         self.textEmitter = textEmitter
+        self.activityHandler = activityHandler
     }
 
     public func begin(firstAudioSequence: UInt32) throws {
         guard expectedSequence == nil else { throw AudioInputBridgeError.alreadyActive }
         session = try sessionFactory.makeSession()
         expectedSequence = firstAudioSequence
+        smoothedAudioLevel = 0
+        smoothedWaveform = Array(repeating: 0, count: 21)
+        activityHandler(SpeechAudioActivity(phase: .recording, level: 0, waveform: smoothedWaveform))
     }
 
     public func receive(_ frame: ADPCMFrame) throws {
@@ -74,17 +109,33 @@ public final class SpeechAudioInputBridge: AudioInputHandling {
                 try session.append(samples: Array(repeating: 0, count: IMAADPCMCodec.samplesPerFrame))
             }
         }
-        try session.append(samples: codec.decode(frame))
+        let samples = try codec.decode(frame)
+        try session.append(samples: samples)
+        smoothedAudioLevel = Self.smoothedLevel(samples: samples, previous: smoothedAudioLevel)
+        smoothedWaveform = Self.smoothedWaveform(samples: samples, previous: smoothedWaveform)
+        activityHandler(SpeechAudioActivity(
+            phase: .recording,
+            level: smoothedAudioLevel,
+            waveform: smoothedWaveform
+        ))
         self.expectedSequence = frame.sequence &+ 1
     }
 
     public func end(lastAudioSequence: UInt32) async throws {
         guard let session else { throw AudioInputBridgeError.notActive }
+        activityHandler(SpeechAudioActivity(phase: .processing, level: 0))
         do {
             let text = try await session.finish().trimmingCharacters(in: .whitespacesAndNewlines)
-            if !text.isEmpty { try textEmitter.emit(text: text) }
+            Self.logger.info("Recognition completed characters=\(text.count)")
+            if !text.isEmpty {
+                try textEmitter.emit(text: text)
+                Self.logger.info("Recognized text keyboard emission completed characters=\(text.count)")
+            }
             self.session = nil
             expectedSequence = nil
+            smoothedAudioLevel = 0
+            smoothedWaveform = Array(repeating: 0, count: 21)
+            activityHandler(.idle)
             _ = lastAudioSequence
         } catch {
             abort()
@@ -96,6 +147,42 @@ public final class SpeechAudioInputBridge: AudioInputHandling {
         session?.cancel()
         session = nil
         expectedSequence = nil
+        smoothedAudioLevel = 0
+        smoothedWaveform = Array(repeating: 0, count: 21)
+        activityHandler(.idle)
+    }
+
+    private static func smoothedLevel(samples: [Int16], previous: Double) -> Double {
+        guard !samples.isEmpty else { return previous * 0.75 }
+        let meanSquare = samples.reduce(0.0) { partial, sample in
+            let normalized = Double(sample) / Double(Int16.max)
+            return partial + normalized * normalized
+        } / Double(samples.count)
+        let rootMeanSquare = sqrt(meanSquare)
+        let normalized = min(max((rootMeanSquare - 0.006) / 0.09, 0), 1)
+        let emphasizedLevel = pow(normalized, 0.58)
+        let smoothing = emphasizedLevel > previous ? 0.76 : 0.28
+        return previous + (emphasizedLevel - previous) * smoothing
+    }
+
+    private static func smoothedWaveform(samples: [Int16], previous: [Double]) -> [Double] {
+        let bandCount = 21
+        guard !samples.isEmpty else { return Array(repeating: 0, count: bandCount) }
+        return (0..<bandCount).map { index in
+            let start = index * samples.count / bandCount
+            let end = max(start + 1, (index + 1) * samples.count / bandCount)
+            let slice = samples[start..<min(end, samples.count)]
+            let meanSquare = slice.reduce(0.0) { partial, sample in
+                let normalized = Double(sample) / Double(Int16.max)
+                return partial + normalized * normalized
+            } / Double(slice.count)
+            let rootMeanSquare = sqrt(meanSquare)
+            let normalized = min(max((rootMeanSquare - 0.004) / 0.075, 0), 1)
+            let emphasized = pow(normalized, 0.52)
+            let oldValue = previous.indices.contains(index) ? previous[index] : 0
+            let smoothing = emphasized > oldValue ? 0.82 : 0.34
+            return oldValue + (emphasized - oldValue) * smoothing
+        }
     }
 }
 

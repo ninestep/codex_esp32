@@ -32,5 +32,7 @@ void cr_ui_update(const cr_device_state_t *state);
 void cr_ui_update_micro(const cr_micro_state_t *state);
 void cr_ui_set_connection_mode(const cr_connection_mode_state_t *state);
 void cr_ui_set_power(cr_power_mode_t mode, size_t asset_index);
+bool cr_ui_is_detail_active(void);
+bool cr_ui_return_to_list(void);
 
 #endif

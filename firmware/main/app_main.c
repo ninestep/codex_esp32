@@ -4,9 +4,11 @@
 #include "codex_remote/connection_mode_store.h"
 #include "codex_remote/device_state.h"
 #include "codex_remote/input_state.h"
+#include "codex_remote/interaction_policy.h"
 #include "codex_remote/power_state.h"
 #include "codex_remote/ui.h"
 #include "codex_micro/hid_transport.h"
+#include "codex_micro/agent_status.h"
 #include "display_runtime.h"
 
 #include "bsp/display.h"
@@ -23,7 +25,12 @@
 #include "freertos/task.h"
 #include "nvs_flash.h"
 
+#include <inttypes.h>
+#include <string.h>
+
 #define USER_BUTTON_GPIO GPIO_NUM_18
+#define ENHANCED_PTT_SESSION_KEY UINT16_C(1)
+#define MICRO_INITIAL_SYNC_QUIET_MS UINT64_C(3000)
 
 static const char *TAG = "codex_remote";
 static cr_device_state_t device_state;
@@ -37,6 +44,7 @@ static bool audio_available;
 static bool audio_prepared;
 static bool companion_transport_started;
 static bool micro_button_ptt_active;
+static bool enhanced_ptt_active;
 static QueueHandle_t ui_state_queue;
 static StaticQueue_t ui_state_queue_storage;
 static uint8_t ui_state_queue_buffer[sizeof(cr_device_state_t)];
@@ -45,6 +53,9 @@ static QueueHandle_t micro_state_queue;
 static StaticQueue_t micro_state_queue_storage;
 static uint8_t micro_state_queue_buffer[sizeof(cr_micro_state_t)];
 static cr_micro_state_t micro_state_snapshot;
+static cr_micro_agent_status_t previous_micro_statuses[CR_MICRO_SLOT_COUNT];
+static bool micro_status_baseline_ready;
+static uint64_t micro_notifications_arm_at_ms;
 
 static uint64_t now_ms(void)
 {
@@ -155,17 +166,6 @@ static void ui_micro_direction(cr_micro_direction_t direction, bool pressed, voi
     }
 }
 
-static void send_micro_control_click(cr_micro_control_t control)
-{
-    esp_err_t result = cr_codex_micro_hid_send_control_key(control, true);
-    if (result == ESP_OK) {
-        result = cr_codex_micro_hid_send_control_key(control, false);
-    }
-    if (result != ESP_OK) {
-        ESP_LOGW(TAG, "Codex Micro physical button unavailable: %s", esp_err_to_name(result));
-    }
-}
-
 static void refresh_connection_mode_ui(void)
 {
     cr_ui_set_connection_mode(&connection_mode_state);
@@ -266,12 +266,62 @@ static void micro_state_task(void *context)
         if (xQueueReceive(
                 micro_state_queue, &micro_state_snapshot, portMAX_DELAY
             ) != pdTRUE) continue;
+        cr_micro_agent_status_t current_statuses[CR_MICRO_SLOT_COUNT];
+        bool status_changed = false;
+        cr_audio_alert_t alert = CR_AUDIO_ALERT_COMPLETED;
+        bool play_alert = false;
+        if (!micro_state_snapshot.connected) {
+            micro_status_baseline_ready = false;
+            micro_notifications_arm_at_ms = 0;
+        } else {
+            uint64_t status_time_ms = now_ms();
+            if (micro_notifications_arm_at_ms == 0) {
+                micro_notifications_arm_at_ms = status_time_ms + MICRO_INITIAL_SYNC_QUIET_MS;
+            }
+            for (size_t index = 0; index < CR_MICRO_SLOT_COUNT; index++) {
+                current_statuses[index] = cr_micro_agent_status(&micro_state_snapshot.slots[index]);
+                if (!micro_status_baseline_ready
+                    || status_time_ms < micro_notifications_arm_at_ms
+                    || current_statuses[index] == previous_micro_statuses[index]) continue;
+                status_changed = true;
+                if (current_statuses[index] == CR_MICRO_AGENT_REQUIRES_INPUT) {
+                    alert = CR_AUDIO_ALERT_REQUIRES_INPUT;
+                    play_alert = true;
+                } else if (current_statuses[index] == CR_MICRO_AGENT_COMPLETED
+                           && alert != CR_AUDIO_ALERT_REQUIRES_INPUT) {
+                    alert = CR_AUDIO_ALERT_COMPLETED;
+                    play_alert = true;
+                }
+            }
+            memcpy(previous_micro_statuses, current_statuses, sizeof(current_statuses));
+            if (!micro_status_baseline_ready || status_time_ms < micro_notifications_arm_at_ms) {
+                micro_status_baseline_ready = true;
+                status_changed = false;
+                play_alert = false;
+            }
+        }
+
         if (esp_lv_adapter_lock(200) != ESP_OK) {
             ESP_LOGW(TAG, "display busy while applying Codex Micro state");
             continue;
         }
+        bool list_active = !cr_ui_is_detail_active();
         cr_ui_update_micro(&micro_state_snapshot);
         esp_lv_adapter_unlock();
+
+        if (status_changed && list_active) {
+            portENTER_CRITICAL(&power_lock);
+            cr_power_note_urgent(&power_state, now_ms());
+            portEXIT_CRITICAL(&power_lock);
+            ESP_LOGI(TAG, "agent status changed; display wake requested");
+        }
+        if (play_alert && audio_available && !audio_prepared
+            && !device_state.ptt_active && !micro_button_ptt_active && !enhanced_ptt_active) {
+            esp_err_t result = cr_audio_alert_play(alert);
+            if (result != ESP_OK && result != ESP_ERR_INVALID_STATE) {
+                ESP_LOGW(TAG, "agent alert unavailable: %s", esp_err_to_name(result));
+            }
+        }
     }
 }
 
@@ -283,14 +333,77 @@ static void execute_input_action(cr_input_action_t action)
     }
     if (!cr_connection_mode_can_accept_input(&connection_mode_state)) return;
     if (connection_mode_state.active == CR_CONNECTION_MODE_NATIVE_MICRO) {
+        bool enhanced_ptt_path = cr_ble_is_connected()
+            || audio_prepared
+            || enhanced_ptt_active;
+        if (enhanced_ptt_path) {
+            switch (action) {
+            case CR_INPUT_PRE_ROLL_BEGIN:
+                audio_prepared = false;
+                if (!audio_available || !cr_ble_is_connected()) {
+                    ESP_LOGW(TAG, "enhanced PTT unavailable: companion audio is not ready");
+                    return;
+                }
+                if (cr_audio_capture_prepare(&pending_first_audio_sequence) != ESP_OK) {
+                    ESP_LOGW(TAG, "enhanced PTT unavailable: audio pre-roll failed");
+                    return;
+                }
+                audio_prepared = true;
+                return;
+            case CR_INPUT_PRE_ROLL_DISCARD:
+                cr_audio_capture_discard();
+                audio_prepared = false;
+                return;
+            case CR_INPUT_PTT_BEGIN:
+                note_interaction(NULL);
+                if (!audio_prepared || !cr_ble_is_connected()) {
+                    cr_audio_capture_discard();
+                    audio_prepared = false;
+                    ESP_LOGW(TAG, "enhanced PTT begin ignored: companion disconnected");
+                    return;
+                }
+                if (cr_ble_send_ptt_begin(
+                        ENHANCED_PTT_SESSION_KEY,
+                        pending_first_audio_sequence
+                    ) != ESP_OK) {
+                    cr_audio_capture_discard();
+                    audio_prepared = false;
+                    return;
+                }
+                if (cr_audio_capture_commit() != ESP_OK) {
+                    (void)cr_ble_send_ptt_end(ENHANCED_PTT_SESSION_KEY, 0);
+                    cr_audio_capture_discard();
+                    audio_prepared = false;
+                    ESP_LOGW(TAG, "enhanced PTT aborted: audio commit failed");
+                    return;
+                }
+                enhanced_ptt_active = true;
+                device_state.ptt_active = true;
+                audio_prepared = false;
+                ESP_LOGI(TAG, "enhanced PTT started");
+                return;
+            case CR_INPUT_PTT_END: {
+                uint32_t last_sequence = 0;
+                cr_audio_capture_stop(&last_sequence);
+                (void)cr_ble_send_ptt_end(ENHANCED_PTT_SESSION_KEY, last_sequence);
+                enhanced_ptt_active = false;
+                device_state.ptt_active = false;
+                note_interaction(NULL);
+                ESP_LOGI(TAG, "enhanced PTT stopped at sequence %" PRIu32, last_sequence);
+                return;
+            }
+            default:
+                break;
+            }
+        }
         switch (action) {
         case CR_INPUT_ENTER:
             note_interaction(NULL);
-            send_micro_control_click(CR_MICRO_CONTROL_SEND);
+            ui_micro_keyboard_action(CR_MICRO_KEYBOARD_ENTER, NULL);
             break;
         case CR_INPUT_ESCAPE:
             note_interaction(NULL);
-            send_micro_control_click(CR_MICRO_CONTROL_DECLINE);
+            ui_micro_keyboard_action(CR_MICRO_KEYBOARD_ESCAPE, NULL);
             break;
         case CR_INPUT_PTT_BEGIN: {
             note_interaction(NULL);
@@ -441,6 +554,28 @@ static void power_task(void *context)
     }
 }
 
+static void detail_timeout_task(void *context)
+{
+    (void)context;
+    while (true) {
+        uint64_t last_interaction_ms;
+        portENTER_CRITICAL(&power_lock);
+        last_interaction_ms = power_state.last_interaction_ms;
+        portEXIT_CRITICAL(&power_lock);
+
+        uint64_t current_ms = now_ms();
+        if (cr_detail_idle_timeout_reached(current_ms, last_interaction_ms)
+            && !device_state.ptt_active && !audio_prepared
+            && !micro_button_ptt_active && !enhanced_ptt_active
+            && esp_lv_adapter_lock(200) == ESP_OK) {
+            bool returned = cr_ui_return_to_list();
+            esp_lv_adapter_unlock();
+            if (returned) ESP_LOGI(TAG, "detail idle timeout; returned to agent list");
+        }
+        vTaskDelay(pdMS_TO_TICKS(250));
+    }
+}
+
 void app_main(void)
 {
     ESP_ERROR_CHECK(initialize_nvs());
@@ -518,6 +653,18 @@ void app_main(void)
                 ? ESP_OK : ESP_ERR_NO_MEM
         );
     } else if (connection_mode_state.active == CR_CONNECTION_MODE_NATIVE_MICRO) {
+        cr_ble_config_t ble_config = {
+            .on_state_changed = ble_state_changed,
+        };
+        ESP_ERROR_CHECK(cr_ble_prepare_hid_companion(&device_state, &ble_config));
+        companion_transport_started = true;
+
+        esp_err_t audio_result = cr_audio_capture_init();
+        audio_available = audio_result == ESP_OK;
+        if (!audio_available) {
+            ESP_LOGW(TAG, "microphone unavailable: %s", esp_err_to_name(audio_result));
+        }
+
         ESP_ERROR_CHECK(
             xTaskCreate(micro_state_task, "micro_ui", 4096, NULL, 5, NULL) == pdPASS
                 ? ESP_OK : ESP_ERR_NO_MEM
@@ -545,6 +692,10 @@ void app_main(void)
     );
     ESP_ERROR_CHECK(
         xTaskCreate(power_task, "display_power", 3072, NULL, 4, NULL) == pdPASS
+            ? ESP_OK : ESP_ERR_NO_MEM
+    );
+    ESP_ERROR_CHECK(
+        xTaskCreate(detail_timeout_task, "detail_timeout", 3072, NULL, 4, NULL) == pdPASS
             ? ESP_OK : ESP_ERR_NO_MEM
     );
 

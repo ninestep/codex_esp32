@@ -102,7 +102,7 @@ struct SetupAssistantView: View {
                 } else if stage == .testing {
                     VStack(alignment: .leading, spacing: 8) {
                         Label(model.audioReadinessText, systemImage: "waveform")
-                        Text("语音由 ESP32 PTT 直接驱动 macOS 原生 Speech 识别；松开设备按键后，识别文本将输入当前焦点。")
+                        Text("语音由 ESP32 PTT 直接发送到豆包识别；松开设备按键后，将结果写入 ChatGPT 输入框。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -196,9 +196,9 @@ struct SetupAssistantView: View {
             .manual("escape", "Esc 操作", prerequisiteReady: hasSession),
             FunctionalTestResult(
                 id: "audio",
-                title: "设备音频到原生识别",
+                title: "设备音频到豆包语音识别",
                 state: model.audioStatus == .ready ? .manual : .waiting,
-                detail: model.audioStatus == .ready ? "需使用真实设备说话并检查焦点文本" : "等待语音识别权限"
+                detail: model.audioStatus == .ready ? "需使用真实设备说话并检查 ChatGPT 输入框" : "等待豆包登录"
             ),
             FunctionalTestResult(
                 id: "ble",
@@ -309,7 +309,7 @@ private enum SetupAssistantStage: String, CaseIterable, Identifiable {
         switch self {
         case .foundation: "确认运行 Codex Remote 所需的基础软件与稳定安装位置。"
         case .automatic: "逐项配置命令桥接、Codex hooks 和 macOS 权限。"
-        case .testing: "检查本地 IPC、原生语音识别状态，并等待 ESP32 设备。"
+        case .testing: "检查本地 IPC、豆包语音识别状态，并等待 ESP32 设备。"
         case .complete: "Mac 就绪状态与 ESP32 真机验收分开计算，不会把等待设备误报为失败。"
         }
     }

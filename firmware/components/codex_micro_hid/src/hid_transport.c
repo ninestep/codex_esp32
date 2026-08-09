@@ -2,6 +2,7 @@
 
 #include "codex_micro/rpc_codec.h"
 #include "codex_micro/vendor_frame.h"
+#include "codex_remote/ble_transport.h"
 
 #include "esp_check.h"
 #include "esp_hidd.h"
@@ -108,9 +109,6 @@ static esp_err_t advertise(void)
     ble_uuid16_t hid_service = BLE_UUID16_INIT(0x1812);
     struct ble_hs_adv_fields fields = {0};
     fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
-    fields.name = (uint8_t *)device_name;
-    fields.name_len = strlen(device_name);
-    fields.name_is_complete = 1;
     fields.appearance = ESP_HID_APPEARANCE_GENERIC;
     fields.appearance_is_present = 1;
     fields.uuids16 = &hid_service;
@@ -118,6 +116,11 @@ static esp_err_t advertise(void)
     fields.uuids16_is_complete = 1;
     result = ble_gap_adv_set_fields(&fields);
     ESP_RETURN_ON_FALSE(result == 0, ESP_FAIL, TAG, "BLE advertising fields failed: %d", result);
+    ESP_RETURN_ON_ERROR(
+        cr_ble_configure_hid_scan_response(device_name),
+        TAG,
+        "companion scan response failed"
+    );
 
     struct ble_gap_adv_params params = {0};
     params.conn_mode = BLE_GAP_CONN_MODE_UND;
@@ -356,13 +359,22 @@ static void hidd_event(
 static int gap_event(struct ble_gap_event *event, void *context)
 {
     (void)context;
+    (void)cr_ble_handle_shared_gap_event(event);
     if (event->type == BLE_GAP_EVENT_DISCONNECT) {
         __atomic_store_n(&output_report, NULL, __ATOMIC_RELEASE);
         input_notification_handle = 0;
         xEventGroupClearBits(notification_events, CR_MICRO_NOTIFY_READY_BIT);
         xQueueReset(rpc_response_queue);
     } else if (event->type == BLE_GAP_EVENT_SUBSCRIBE) {
-        if (event->subscribe.cur_notify && input_notification_handle == 0) {
+        struct report *subscribed_report = find_rpt_by_handle(
+            event->subscribe.attr_handle
+        );
+        bool is_vendor_input = subscribed_report != NULL
+            && subscribed_report->id == CR_MICRO_REPORT_ID
+            && subscribed_report->type == BLE_SVC_HID_RPT_TYPE_INPUT;
+        if (event->subscribe.cur_notify
+            && is_vendor_input
+            && input_notification_handle == 0) {
             input_notification_handle = event->subscribe.attr_handle;
             struct report *report = find_output_report(input_notification_handle);
             if (report == NULL) {
@@ -384,6 +396,7 @@ static int gap_event(struct ble_gap_event *event, void *context)
                 input_notification_handle
             );
         } else if (!event->subscribe.cur_notify
+                   && is_vendor_input
                    && event->subscribe.attr_handle == input_notification_handle) {
             input_notification_handle = 0;
             xEventGroupClearBits(notification_events, CR_MICRO_NOTIFY_READY_BIT);
@@ -472,6 +485,11 @@ esp_err_t cr_codex_micro_hid_start(const cr_codex_micro_hid_config_t *config)
         ),
         TAG,
         "HID profile init failed"
+    );
+    ESP_RETURN_ON_ERROR(
+        cr_ble_register_hid_companion_services(),
+        TAG,
+        "companion GATT registration failed"
     );
     ESP_RETURN_ON_FALSE(
         ble_svc_gap_device_name_set(device_name) == 0,

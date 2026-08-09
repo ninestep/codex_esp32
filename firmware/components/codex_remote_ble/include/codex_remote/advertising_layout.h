@@ -11,3 +11,4 @@ typedef struct {
 } cr_ble_advertising_layout_t;
 
 cr_ble_advertising_layout_t cr_ble_advertising_layout(size_t name_length);
+cr_ble_advertising_layout_t cr_ble_hid_companion_advertising_layout(size_t name_length);

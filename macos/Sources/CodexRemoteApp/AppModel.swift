@@ -6,7 +6,6 @@ import AppKit
 import AVFoundation
 import Darwin
 import Foundation
-import Speech
 
 enum HotkeyTestViewState: Equatable {
     case idle
@@ -44,6 +43,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var isSetupBusy = false
     @Published private(set) var settingsSaveMessage: String?
     @Published private(set) var managedConfigurationCleanupMessage: String?
+    @Published private(set) var doubaoLoginState: DoubaoLoginState
+    @Published private(set) var speechAudioActivity = SpeechAudioActivity.idle
     @Published private var automaticSetupProgress = AutomaticSetupProgressState()
     @Published var settings: AppSettings
 
@@ -52,6 +53,7 @@ final class AppModel: ObservableObject {
     private var setupServices: SetupServices
     private let hotkeyTester: HotkeyTester
     private let bluetoothConnectionStatus: BluetoothConnectionStatus
+    private let doubaoLoginController: DoubaoLoginController
     private let esp32ConnectedReader: @Sendable () async -> Bool
     private var setupActivity = SetupActivityState()
     private var pendingSetupSettings: AppSettings?
@@ -61,20 +63,31 @@ final class AppModel: ObservableObject {
         automaticSetupProgress.hasStarted
     }
 
+    var isEnhancedMode: Bool { true }
+
     init() {
         let loadedSettings = Self.loadSettings()
         let bluetoothConnectionStatus = BluetoothConnectionStatus()
+        let doubaoLoginController = DoubaoLoginController()
         let esp32ConnectedReader: @Sendable () async -> Bool = {
             await bluetoothConnectionStatus.isConnected
         }
         settings = loadedSettings
+        doubaoLoginState = doubaoLoginController.state
         self.bluetoothConnectionStatus = bluetoothConnectionStatus
+        self.doubaoLoginController = doubaoLoginController
         self.esp32ConnectedReader = esp32ConnectedReader
         setupServices = Self.makeSetupServices(
             settings: loadedSettings,
             esp32ConnectedReader: esp32ConnectedReader
         )
         hotkeyTester = HotkeyTester()
+        doubaoLoginController.onStateChange = { [weak self] state in
+            guard let self else { return }
+            self.doubaoLoginState = state
+            self.runtime?.audioInput.replace(with: self.makeEnhancedAudioInput())
+            self.audioStatus = self.runtime?.audioInput.dependencyStatus ?? self.audioStatus
+        }
     }
 
     var menuBarStatusToken: String {
@@ -108,9 +121,19 @@ final class AppModel: ObservableObject {
     }
 
     var audioReadinessText: String {
+        switch doubaoLoginState {
+        case .loggedOut:
+            return "需要登录豆包"
+        case .loginWindowOpen:
+            return "等待完成豆包登录"
+        case .failed(let message):
+            return message
+        case .ready:
+            break
+        }
         guard audioStatus == .ready else { return audioStatus.userMessage }
         guard AXIsProcessTrusted() else { return "需要辅助功能权限" }
-        return "Mac 原生语音识别已就绪"
+        return "豆包语音识别已就绪"
     }
 
     var isDoubaoHotkeyInputValid: Bool {
@@ -127,46 +150,27 @@ final class AppModel: ObservableObject {
         isStarting = true
         defer { isStarting = false }
 
-        let service = SessionService()
-        let speechAuthorized = await SpeechRecognitionAuthorization.request()
-        let audioInput = ReloadableAudioInputBridge(current: SpeechAudioInputBridge())
-        audioStatus = speechAuthorized ? audioInput.dependencyStatus : .speechRecognitionUnavailable
-        let coordinator = MacClientCoordinator(sessionService: service, audioInput: audioInput)
-        coordinator.onSnapshotChange = { [weak self] snapshot in
+        let audioInput = ReloadableAudioInputBridge(current: makeEnhancedAudioInput())
+        audioStatus = audioInput.dependencyStatus
+        let coordinator = CompanionAudioCoordinator(audioInput: audioInput)
+        coordinator.onSnapshotChange = { [weak self] companionSnapshot in
             guard let self else { return }
-            let connectionChanged = self.bluetoothConnectionStatus.update(snapshot.transportState)
-            self.snapshot = snapshot
-            if connectionChanged {
+            let connectionChanged = self.bluetoothConnectionStatus.update(companionSnapshot.transportState)
+            self.snapshot = ClientSnapshot(
+                transportState: companionSnapshot.transportState,
+                sessions: [],
+                deviceInformation: companionSnapshot.deviceInformation,
+                selectedSessionKey: nil
+            )
+            if connectionChanged && !self.isEnhancedMode {
                 Task { [weak self] in
                     await self?.refreshSetup()
                 }
             }
         }
-        let dispatcher = SessionIPCDispatcher(
-            service: service,
-            onSessionsChanged: {
-                try? await coordinator.refreshSessions()
-            }
-        )
-        let socketURL = URL(fileURLWithPath: settings.socketPath)
-        let startupGate = IPCStartupGate()
-        let server = UnixSocketIPCServer(socketURL: socketURL) { request in
-            await startupGate.waitUntilReady()
-            return await dispatcher.handle(request)
-        }
-
-        do {
-            try SocketParentPreparer().prepareParentDirectory(for: socketURL)
-            try await server.start()
-            _ = try await HookEventQueue().drain(forSocketAt: socketURL, dispatcher: dispatcher)
-            await startupGate.open()
-            runtime = AppRuntime(coordinator: coordinator, server: server, audioInput: audioInput)
-            helperStatus = "运行中"
-            coordinator.start()
-        } catch {
-            await server.stop()
-            helperStatus = "启动失败：\(Self.userFacingStartupError(error))"
-        }
+        runtime = AppRuntime(coordinator: coordinator, audioInput: audioInput)
+        helperStatus = "增强模式运行中"
+        coordinator.start()
     }
 
     func saveSettings() {
@@ -183,7 +187,7 @@ final class AppModel: ObservableObject {
 
         settings = settingsToSave
         UserDefaults.standard.set(data, forKey: Self.settingsKey)
-        runtime?.audioInput.replace(with: SpeechAudioInputBridge())
+        runtime?.audioInput.replace(with: makeEnhancedAudioInput())
         audioStatus = runtime?.audioInput.dependencyStatus ?? audioStatus
         if setupActivity.requestServiceRebuild() {
             setupServices = Self.makeSetupServices(
@@ -198,6 +202,24 @@ final class AppModel: ObservableObject {
             pendingSetupSettings = settingsToSave
             settingsSaveMessage = "设置已保存，将在当前配置结束后复查"
         }
+    }
+
+    private func makeEnhancedAudioInput() -> any AudioInputHandling {
+        SpeechAudioInputBridge(
+            sessionFactory: DoubaoSpeechRecognitionSessionFactory(),
+            textEmitter: CGEventRecognizedTextEmitter(),
+            activityHandler: { [weak self] activity in
+                self?.speechAudioActivity = activity
+            }
+        )
+    }
+
+    func showDoubaoLogin() {
+        doubaoLoginController.showLoginWindow()
+    }
+
+    func logoutDoubao() {
+        doubaoLoginController.logout()
     }
 
     func refreshSetup() async {
@@ -326,7 +348,6 @@ final class AppModel: ObservableObject {
         guard let runtime else { return }
         runtime.coordinator.stop()
         self.runtime = nil
-        Task { await runtime.server.stop() }
     }
 
     private static let settingsKey = "codexRemote.appSettings.v1"
@@ -510,13 +531,11 @@ private struct SetupServices {
 
 @MainActor
 private final class AppRuntime {
-    let coordinator: MacClientCoordinator
-    let server: UnixSocketIPCServer
+    let coordinator: CompanionAudioCoordinator
     let audioInput: ReloadableAudioInputBridge
 
-    init(coordinator: MacClientCoordinator, server: UnixSocketIPCServer, audioInput: ReloadableAudioInputBridge) {
+    init(coordinator: CompanionAudioCoordinator, audioInput: ReloadableAudioInputBridge) {
         self.coordinator = coordinator
-        self.server = server
         self.audioInput = audioInput
     }
 }

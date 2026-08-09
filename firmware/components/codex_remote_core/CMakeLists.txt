@@ -8,6 +8,7 @@ idf_component_register(
         "src/device_state.c"
         "src/fragment.c"
         "src/input_state.c"
+        "src/interaction_policy.c"
         "src/message.c"
         "src/power_state.c"
     INCLUDE_DIRS "include"

@@ -45,6 +45,8 @@ const uint8_t cr_micro_hid_report_map[CR_MICRO_HID_REPORT_MAP_BYTES] = {
 
 #define CR_HID_MODIFIER_LEFT_GUI UINT8_C(0x08)
 #define CR_HID_KEY_A UINT8_C(0x04)
+#define CR_HID_KEY_ENTER UINT8_C(0x28)
+#define CR_HID_KEY_ESCAPE UINT8_C(0x29)
 #define CR_HID_KEY_BACKSPACE UINT8_C(0x2a)
 
 cr_micro_frame_result_t cr_micro_keyboard_action_encode(
@@ -64,6 +66,14 @@ cr_micro_frame_result_t cr_micro_keyboard_action_encode(
         sequence->reports[0][2] = CR_HID_KEY_A;
         sequence->reports[2][2] = CR_HID_KEY_BACKSPACE;
         sequence->count = 4;
+        return CR_MICRO_FRAME_OK;
+    case CR_MICRO_KEYBOARD_ENTER:
+        sequence->reports[0][2] = CR_HID_KEY_ENTER;
+        sequence->count = 2;
+        return CR_MICRO_FRAME_OK;
+    case CR_MICRO_KEYBOARD_ESCAPE:
+        sequence->reports[0][2] = CR_HID_KEY_ESCAPE;
+        sequence->count = 2;
         return CR_MICRO_FRAME_OK;
     default:
         return CR_MICRO_FRAME_INVALID_ARGUMENT;

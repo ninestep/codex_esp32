@@ -27,7 +27,9 @@ struct AudioSignalDiagnostics: Equatable, Sendable {
 }
 
 struct BlackHoleOutputGain: Sendable {
-    static let multiplier: Int32 = 24
+    // ESP32 PCM is quieter than a typical Mac microphone, but excessive gain
+    // raises the radio/microphone noise floor enough to confuse IME speech input.
+    static let multiplier: Int32 = 8
 
     func apply(to sample: Int16) -> Int16 {
         let amplified = Int32(sample) * Self.multiplier

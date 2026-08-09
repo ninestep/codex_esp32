@@ -14,8 +14,12 @@ struct MenuBarContentView: View {
             Divider()
 
             if model.snapshot.sessions.isEmpty {
-                Text("暂无 Codex 会话")
-                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Codex Micro 增强模式")
+                    Text("实体长按使用设备麦克风和豆包语音识别")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             } else {
                 ForEach(model.snapshot.sessions, id: \.remoteSessionID) { session in
                     HStack(spacing: 8) {
@@ -33,7 +37,7 @@ struct MenuBarContentView: View {
             }
 
             Divider()
-            if !model.setupSnapshot.isMacReady {
+            if !model.isEnhancedMode && !model.setupSnapshot.isMacReady {
                 Button {
                     model.openSetupAssistant()
                 } label: {

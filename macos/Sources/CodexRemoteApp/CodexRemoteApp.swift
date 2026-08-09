@@ -35,25 +35,31 @@ private struct MenuBarStatusLabel: View {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let model = AppModel()
     private lazy var setupWindowController = SetupWindowController(model: model)
+    private lazy var speechVisualizationWindowController = SpeechVisualizationWindowController(model: model)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        speechVisualizationWindowController.start()
         model.onOpenSetupAssistant = { [weak self] in
             self?.setupWindowController.show()
         }
         Task {
             await model.start()
-            await model.refreshSetup()
-            if !model.setupSnapshot.isMacReady {
+            if !model.isEnhancedMode {
+                await model.refreshSetup()
+            }
+            if !model.isEnhancedMode && !model.setupSnapshot.isMacReady {
                 setupWindowController.show()
             }
         }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        speechVisualizationWindowController.stop()
         model.stop()
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
+        guard !model.isEnhancedMode else { return }
         Task {
             await model.refreshSetup()
         }

@@ -61,8 +61,9 @@ int main(void)
     assert(strstr(app_source, "cr_codex_micro_hid_send_encoder_press") != NULL);
     assert(strstr(app_source, "cr_codex_micro_hid_send_encoder") != NULL);
     assert(strstr(app_source, "cr_codex_micro_hid_send_direction") != NULL);
-    assert(strstr(app_source, "send_micro_control_click(CR_MICRO_CONTROL_SEND)") != NULL);
-    assert(strstr(app_source, "send_micro_control_click(CR_MICRO_CONTROL_DECLINE)") != NULL);
+    assert(strstr(app_source, "ui_micro_keyboard_action(CR_MICRO_KEYBOARD_ENTER, NULL)") != NULL);
+    assert(strstr(app_source, "ui_micro_keyboard_action(CR_MICRO_KEYBOARD_ESCAPE, NULL)") != NULL);
+    assert(strstr(app_source, "send_micro_control_click") == NULL);
     assert(strstr(app_source, "cr_codex_micro_hid_send_control_key(CR_MICRO_CONTROL_PTT, true)") != NULL);
     assert(strstr(app_source, "cr_codex_micro_hid_send_control_key(CR_MICRO_CONTROL_PTT, false)") != NULL);
     assert(strstr(app_source, "input_context.detail_active = true") != NULL);
@@ -70,6 +71,15 @@ int main(void)
     assert(strstr(app_source, ".micro_encoder_press = ui_micro_encoder_press") != NULL);
     assert(strstr(app_source, ".micro_encoder_turn = ui_micro_encoder_turn") != NULL);
     assert(strstr(app_source, ".micro_direction = ui_micro_direction") != NULL);
+
+    char hid_transport_source[65536];
+    read_source(
+        "firmware/components/codex_micro_hid/src/hid_transport.c",
+        hid_transport_source,
+        sizeof(hid_transport_source)
+    );
+    assert(strstr(hid_transport_source, "subscribed_report->id == CR_MICRO_REPORT_ID") != NULL);
+    assert(strstr(hid_transport_source, "subscribed_report->type == BLE_SVC_HID_RPT_TYPE_INPUT") != NULL);
 
     char ui_source[65536];
     read_source("firmware/components/codex_remote_ui/src/ui.c", ui_source, sizeof(ui_source));

@@ -25,6 +25,11 @@
 #define CR_ENCODED_BYTES ((size_t)4096)
 #define CR_DEVICE_CAPABILITIES UINT16_C(0x000f)
 #define CR_BLE_NO_CONNECTION UINT16_MAX
+#define CR_BLE_SUB_CONTROL_TO_HOST UINT8_C(0x01)
+#define CR_BLE_SUB_AUDIO_TO_HOST UINT8_C(0x02)
+#define CR_BLE_SUB_DEVICE_INFO UINT8_C(0x04)
+#define CR_BLE_REQUIRED_SUBSCRIPTIONS ( \
+    CR_BLE_SUB_CONTROL_TO_HOST | CR_BLE_SUB_AUDIO_TO_HOST | CR_BLE_SUB_DEVICE_INFO)
 
 void ble_store_config_init(void);
 
@@ -48,9 +53,13 @@ static uint16_t control_to_host_handle;
 static uint16_t audio_to_host_handle;
 static uint16_t device_info_handle;
 static uint16_t connection_handle = CR_BLE_NO_CONNECTION;
+static uint8_t companion_subscription_mask;
 static uint8_t own_address_type;
 static cr_device_state_t *device_state;
 static cr_ble_config_t callbacks;
+static bool runtime_prepared;
+static bool services_registered;
+static bool shared_hid_mode;
 static cr_fragment_reassembler_t control_reassembler;
 static cr_fragment_reassembler_t state_reassembler;
 static cr_fragment_reassembler_t asset_reassembler;
@@ -72,6 +81,14 @@ static uint8_t device_info_queue_buffer[sizeof(uint16_t)];
 static QueueHandle_t device_info_queue;
 
 static void advertise(void);
+
+static uint8_t subscription_bit(uint16_t attribute_handle)
+{
+    if (attribute_handle == control_to_host_handle) return CR_BLE_SUB_CONTROL_TO_HOST;
+    if (attribute_handle == audio_to_host_handle) return CR_BLE_SUB_AUDIO_TO_HOST;
+    if (attribute_handle == device_info_handle) return CR_BLE_SUB_DEVICE_INFO;
+    return 0;
+}
 
 static void publish_state(void)
 {
@@ -313,30 +330,55 @@ static const struct ble_gatt_svc_def services[] = {{
     },
 }, {0}};
 
-static int gap_event(struct ble_gap_event *event, void *arg)
+int cr_ble_handle_shared_gap_event(struct ble_gap_event *event)
 {
-    (void)arg;
+    if (!runtime_prepared || event == NULL) return 0;
     switch (event->type) {
     case BLE_GAP_EVENT_CONNECT:
         if (event->connect.status == 0) {
-            connection_handle = event->connect.conn_handle;
-            ESP_LOGI(TAG, "Mac connected");
-        } else {
+            if (!shared_hid_mode) {
+                connection_handle = event->connect.conn_handle;
+                ESP_LOGI(TAG, "Mac connected");
+            }
+        } else if (!shared_hid_mode) {
             advertise();
         }
         return 0;
     case BLE_GAP_EVENT_DISCONNECT:
         connection_handle = CR_BLE_NO_CONNECTION;
+        companion_subscription_mask = 0;
         cr_device_state_disconnect(device_state);
         publish_state();
-        advertise();
+        if (!shared_hid_mode) advertise();
         return 0;
-    case BLE_GAP_EVENT_SUBSCRIBE:
-        if (event->subscribe.attr_handle == device_info_handle && event->subscribe.cur_notify) {
+    case BLE_GAP_EVENT_SUBSCRIBE: {
+        uint8_t bit = subscription_bit(event->subscribe.attr_handle);
+        if (bit == 0) return 0;
+        if (event->subscribe.cur_notify || event->subscribe.cur_indicate) {
+            companion_subscription_mask |= bit;
+        } else {
+            companion_subscription_mask &= (uint8_t)~bit;
+        }
+        if (event->subscribe.attr_handle == device_info_handle
+            && event->subscribe.cur_notify) {
             queue_device_info(event->subscribe.conn_handle);
         }
+        if ((companion_subscription_mask & CR_BLE_REQUIRED_SUBSCRIPTIONS)
+            == CR_BLE_REQUIRED_SUBSCRIPTIONS) {
+            if (connection_handle == CR_BLE_NO_CONNECTION) {
+                ESP_LOGI(TAG, "Mac companion channels ready");
+            }
+            connection_handle = event->subscribe.conn_handle;
+        } else if (connection_handle == event->subscribe.conn_handle) {
+            connection_handle = CR_BLE_NO_CONNECTION;
+            device_state->ptt_active = false;
+            publish_state();
+            ESP_LOGI(TAG, "Mac companion channels unavailable");
+        }
         return 0;
+    }
     case BLE_GAP_EVENT_REPEAT_PAIRING: {
+        if (shared_hid_mode) return 0;
         struct ble_gap_conn_desc desc;
         if (ble_gap_conn_find(event->repeat_pairing.conn_handle, &desc) == 0) {
             ble_store_util_delete_peer(&desc.peer_id_addr);
@@ -346,6 +388,12 @@ static int gap_event(struct ble_gap_event *event, void *arg)
     default:
         return 0;
     }
+}
+
+static int gap_event(struct ble_gap_event *event, void *arg)
+{
+    (void)arg;
+    return cr_ble_handle_shared_gap_event(event);
 }
 
 static void advertise(void)
@@ -404,30 +452,22 @@ static void host_task(void *param)
     nimble_port_freertos_deinit();
 }
 
-esp_err_t cr_ble_start(cr_device_state_t *state, const cr_ble_config_t *config)
+static esp_err_t prepare_runtime(cr_device_state_t *state, const cr_ble_config_t *config)
 {
-    ESP_RETURN_ON_FALSE(state != NULL && config != NULL, ESP_ERR_INVALID_ARG, TAG, "invalid config");
+    ESP_RETURN_ON_FALSE(
+        state != NULL && config != NULL,
+        ESP_ERR_INVALID_ARG,
+        TAG,
+        "invalid config"
+    );
+    ESP_RETURN_ON_FALSE(!runtime_prepared, ESP_ERR_INVALID_STATE, TAG, "BLE already prepared");
     tx_lock = xSemaphoreCreateMutexStatic(&tx_lock_storage);
+    ESP_RETURN_ON_FALSE(tx_lock != NULL, ESP_ERR_NO_MEM, TAG, "TX lock allocation failed");
     device_state = state;
     callbacks = *config;
     cr_fragment_reassembler_init(&control_reassembler, control_storage, sizeof(control_storage));
     cr_fragment_reassembler_init(&state_reassembler, state_storage, sizeof(state_storage));
     cr_fragment_reassembler_init(&asset_reassembler, asset_storage, sizeof(asset_storage));
-
-    ESP_RETURN_ON_ERROR(nimble_port_init(), TAG, "NimBLE init failed");
-    ble_hs_cfg.sync_cb = on_sync;
-    ble_hs_cfg.sm_bonding = 1;
-    ble_hs_cfg.sm_mitm = 0;
-    ble_hs_cfg.sm_sc = 1;
-    ble_hs_cfg.sm_our_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
-    ble_hs_cfg.sm_their_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
-    ble_hs_cfg.store_status_cb = ble_store_util_status_rr;
-    ble_store_config_init();
-    ble_svc_gap_init();
-    ble_svc_gatt_init();
-    ESP_RETURN_ON_FALSE(ble_svc_gap_device_name_set("Codex Remote") == 0, ESP_FAIL, TAG, "name failed");
-    ESP_RETURN_ON_FALSE(ble_gatts_count_cfg(services) == 0, ESP_FAIL, TAG, "GATT count failed");
-    ESP_RETURN_ON_FALSE(ble_gatts_add_svcs(services) == 0, ESP_FAIL, TAG, "GATT add failed");
     device_info_queue = xQueueCreateStatic(
         1,
         sizeof(uint16_t),
@@ -443,6 +483,88 @@ esp_err_t cr_ble_start(cr_device_state_t *state, const cr_ble_config_t *config)
         TAG,
         "device info task failed"
     );
+    runtime_prepared = true;
+    return ESP_OK;
+}
+
+static esp_err_t register_services(void)
+{
+    ESP_RETURN_ON_FALSE(runtime_prepared, ESP_ERR_INVALID_STATE, TAG, "BLE not prepared");
+    ESP_RETURN_ON_FALSE(!services_registered, ESP_ERR_INVALID_STATE, TAG, "services already registered");
+    ESP_RETURN_ON_FALSE(ble_gatts_count_cfg(services) == 0, ESP_FAIL, TAG, "GATT count failed");
+    ESP_RETURN_ON_FALSE(ble_gatts_add_svcs(services) == 0, ESP_FAIL, TAG, "GATT add failed");
+    services_registered = true;
+    return ESP_OK;
+}
+
+esp_err_t cr_ble_prepare_hid_companion(
+    cr_device_state_t *state,
+    const cr_ble_config_t *config
+)
+{
+    ESP_RETURN_ON_ERROR(prepare_runtime(state, config), TAG, "companion prepare failed");
+    shared_hid_mode = true;
+    return ESP_OK;
+}
+
+esp_err_t cr_ble_register_hid_companion_services(void)
+{
+    ESP_RETURN_ON_FALSE(shared_hid_mode, ESP_ERR_INVALID_STATE, TAG, "not in shared HID mode");
+    return register_services();
+}
+
+esp_err_t cr_ble_configure_hid_scan_response(const char *device_name)
+{
+    ESP_RETURN_ON_FALSE(
+        shared_hid_mode && services_registered && device_name != NULL,
+        ESP_ERR_INVALID_STATE,
+        TAG,
+        "shared services are unavailable"
+    );
+    cr_ble_advertising_layout_t layout = cr_ble_hid_companion_advertising_layout(
+        strlen(device_name)
+    );
+    ESP_RETURN_ON_FALSE(layout.fits_legacy_limits, ESP_ERR_INVALID_SIZE, TAG, "scan response too large");
+
+    struct ble_hs_adv_fields response = {0};
+    response.name = (uint8_t *)device_name;
+    response.name_len = strlen(device_name);
+    response.name_is_complete = 1;
+    response.uuids128 = (ble_uuid128_t *)&service_uuid;
+    response.num_uuids128 = 1;
+    response.uuids128_is_complete = 1;
+    ESP_RETURN_ON_FALSE(
+        ble_gap_adv_rsp_set_fields(&response) == 0,
+        ESP_FAIL,
+        TAG,
+        "shared scan response failed"
+    );
+    return ESP_OK;
+}
+
+bool cr_ble_is_connected(void)
+{
+    return connection_handle != CR_BLE_NO_CONNECTION;
+}
+
+esp_err_t cr_ble_start(cr_device_state_t *state, const cr_ble_config_t *config)
+{
+    ESP_RETURN_ON_ERROR(prepare_runtime(state, config), TAG, "BLE prepare failed");
+    shared_hid_mode = false;
+
+    ESP_RETURN_ON_ERROR(nimble_port_init(), TAG, "NimBLE init failed");
+    ble_hs_cfg.sync_cb = on_sync;
+    ble_hs_cfg.sm_bonding = 1;
+    ble_hs_cfg.sm_mitm = 0;
+    ble_hs_cfg.sm_sc = 1;
+    ble_hs_cfg.sm_our_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
+    ble_hs_cfg.sm_their_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
+    ble_hs_cfg.store_status_cb = ble_store_util_status_rr;
+    ble_store_config_init();
+    ble_svc_gap_init();
+    ble_svc_gatt_init();
+    ESP_RETURN_ON_FALSE(ble_svc_gap_device_name_set("Codex Remote") == 0, ESP_FAIL, TAG, "name failed");
+    ESP_RETURN_ON_ERROR(register_services(), TAG, "GATT registration failed");
     nimble_port_freertos_init(host_task);
     return ESP_OK;
 }

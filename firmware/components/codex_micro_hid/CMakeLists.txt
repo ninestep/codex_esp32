@@ -1,7 +1,7 @@
 idf_component_register(
-    SRCS "src/hid_transport.c" "src/vendor_frame.c" "src/rpc_codec.c" "src/micro_state.c"
+    SRCS "src/hid_transport.c" "src/vendor_frame.c" "src/rpc_codec.c" "src/micro_state.c" "src/agent_status.c"
     INCLUDE_DIRS "include"
-    REQUIRES bt esp_event esp_hid json nvs_flash
+    REQUIRES bt codex_remote_ble esp_event esp_hid json nvs_flash
 )
 
 target_compile_features(${COMPONENT_LIB} PUBLIC c_std_17)

@@ -1,6 +1,6 @@
 # Codex Micro 原生模式与 Mac App 增强模式开发计划
 
-**状态：** 方案已确认，等待实施授权
+**状态：** 实施中；原生控制已完成，Mac App 增强模式基础件开发中
 
 **目标平台：** ESP32-S3-Touch-AMOLED-2.16、macOS 15+；USB 麦克风兼容 Windows 作为独立验收项
 
@@ -394,12 +394,16 @@ zsh firmware/test/host/run-tests.zsh all
 
 **Steps:**
 
-- [ ] 为 companion coordinator 写 PTT begin、乱序帧、sequence gap、空识别、识别失败、PTT end 和断线取消测试。
-- [ ] 复用现有 BLE fragmentation、IMA-ADPCM codec 和 Speech session。
-- [ ] coordinator 只处理设备信息、PTT control、audio frame 和 action result，不查询 Codex CLI 会话。
-- [ ] App 启动时不创建 `SessionService`、IPC socket、Hook dispatcher 或 Ghostty controller。
+- [x] 为 companion coordinator 写 PTT begin、重复请求、识别失败、PTT end、异常分片和断线取消测试；乱序帧、sequence gap 与空识别继续由 `SpeechAudioInputBridgeTests` 覆盖。
+- [x] 复用现有 BLE fragmentation、IMA-ADPCM codec 和 Speech session。
+- [x] coordinator 只处理设备信息、PTT control、audio frame 和 action result，不查询 Codex CLI 会话。
+- [x] App 启动时不创建 `SessionService`、IPC socket、Hook dispatcher 或 Ghostty controller。
 - [ ] 菜单栏分别显示：HOGP 状态未知/正常、自定义音频 BLE 状态、Speech 状态、最近一次识别结果。
 - [ ] 日志只记录序列、帧数、字节数和错误，不记录完整语音文本。
+
+2026-08-09 增补：新增只读 `CodexMicroLayoutReader`，从 `~/.codex/config.toml` 的
+`desktop.codex-micro-layout` 读取六个 Command Key 的实际槽位、显式 command/skill 覆盖和麦克风
+分键状态。该读取器不修改 Codex 配置；动态同步到设备需要后续单独评审 BLE shared contract。
 
 **Verification:**
 
@@ -426,14 +430,18 @@ swift test --package-path macos --parallel --disable-sandbox
 
 **Steps:**
 
-- [ ] 先读取当前 ChatGPT Desktop bundle metadata 和 Accessibility Tree，记录真实 role、identifier 和 value 行为。
-- [ ] 用 protocol 隔离运行应用发现和 AX 查询，单元测试使用确定性 fake tree。
-- [ ] 只接受已确认的 ChatGPT bundle identity；多实例或身份不明时失败。
-- [ ] 查找当前窗口中的可编辑 composer；不得把侧栏搜索框或设置输入框当作 composer。
-- [ ] 写入前保存 composer 当前内容；采用追加或替换策略前在 UI 中给出明确设置，默认追加到光标位置。
+- [x] 已读取当前 Codex Desktop bundle metadata 和 Accessibility Tree：bundle ID `com.openai.codex`，版本 `26.803.41515`，build `6321`，进程显示名 `ChatGPT`；composer 为 `AXTextArea`，`AXDOMClassList` 含 `ProseMirror`，描述为“随心输入”，无 `AXIdentifier`。
+- [x] 用 protocol 隔离运行应用发现和 AX 查询，单元测试使用确定性 fake tree。
+- [x] 只接受已确认的 ChatGPT bundle identity；多实例或身份不明时失败。
+- [x] 只接受目标进程当前聚焦且可编辑的 `AXTextArea`，并要求 DOM class 命中现场确认的 `ProseMirror`；侧栏搜索框、设置字段和其他应用均拒绝。
+- [x] 通过 `AXSelectedText` 在当前选择或光标位置插入，不覆盖 composer 其余内容；身份或 DOM 特征变化时保持 fail-closed。
 - [ ] 写入失败时返回识别文本和明确错误，App 提供手动复制按钮。
-- [ ] 不调用 Send；用户仍通过实体 Send 键或 ChatGPT UI 发送。
-- [ ] 保留 `CGEventRecognizedTextEmitter` 仅供旧测试迁移，最终 companion runtime 不使用它。
+- [x] 不调用 Send；用户仍通过实体 Send 键或 ChatGPT UI 发送。
+- [x] 保留 `CGEventRecognizedTextEmitter` 仅供旧测试迁移，最终 companion runtime 不使用它。
+
+2026-08-09 现场修正：当前应用包是 `Codex.app` / `com.openai.codex`，只有进程显示名为
+`ChatGPT`；增强模式按真实 bundle identity 定位。`SpeechAudioInputBridge` 默认 emitter 已切换为
+定向 composer emitter，不再向系统全局焦点发送识别文字。
 
 **Verification:**
 

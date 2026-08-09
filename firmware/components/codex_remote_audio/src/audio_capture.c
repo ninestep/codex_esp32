@@ -10,6 +10,7 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "freertos/queue.h"
 #include "freertos/task.h"
 
 #include <string.h>
@@ -17,6 +18,8 @@
 #define PRE_ROLL_FRAME_COUNT 20
 #define AUDIO_CHANNEL_COUNT 2
 #define MICROPHONE_GAIN_DB 30.0f
+#define SPEAKER_VOLUME 55
+#define ALERT_CHUNK_SAMPLES 160
 
 typedef enum {
     CAPTURE_IDLE,
@@ -33,7 +36,9 @@ typedef struct {
 
 static const char *TAG = "codex_remote_audio";
 static esp_codec_dev_handle_t microphone;
+static esp_codec_dev_handle_t speaker;
 static SemaphoreHandle_t lock;
+static QueueHandle_t alert_queue;
 static capture_mode_t mode;
 static stored_frame_t pre_roll[PRE_ROLL_FRAME_COUNT];
 static size_t pre_roll_start;
@@ -48,6 +53,14 @@ static stored_frame_t streaming_frame;
 static uint32_t channel_peak[AUDIO_CHANNEL_COUNT];
 static uint64_t channel_absolute_sum[AUDIO_CHANNEL_COUNT];
 static uint64_t channel_sample_count;
+static int16_t alert_pcm_buffer[ALERT_CHUNK_SAMPLES * AUDIO_CHANNEL_COUNT];
+
+static const int16_t sine_table[32] = {
+    0, 1278, 2506, 3630, 4609, 5406, 5999, 6364,
+    6488, 6364, 5999, 5406, 4609, 3630, 2506, 1278,
+    0, -1278, -2506, -3630, -4609, -5406, -5999, -6364,
+    -6488, -6364, -5999, -5406, -4609, -3630, -2506, -1278,
+};
 
 static void log_internal_heap(const char *stage)
 {
@@ -74,6 +87,67 @@ static void send_stored(const stored_frame_t *stored)
     };
     if (cr_ble_send_audio_frame(&message) != ESP_OK) {
         ESP_LOGW(TAG, "audio frame %" PRIu32 " dropped", stored->sequence);
+    }
+}
+
+static bool alert_can_continue(void)
+{
+    xSemaphoreTake(lock, portMAX_DELAY);
+    bool allowed = mode == CAPTURE_IDLE;
+    xSemaphoreGive(lock);
+    return allowed;
+}
+
+static bool play_tone(uint16_t frequency_hz, uint16_t duration_ms)
+{
+    uint32_t phase = 0;
+    uint32_t phase_step = (uint32_t)frequency_hz * UINT32_C(32);
+    size_t remaining = (size_t)duration_ms * 16;
+    while (remaining > 0) {
+        if (!alert_can_continue()) return false;
+        size_t samples = remaining < ALERT_CHUNK_SAMPLES ? remaining : ALERT_CHUNK_SAMPLES;
+        for (size_t index = 0; index < samples; index++) {
+            int16_t sample = sine_table[(phase / UINT32_C(16000)) & UINT32_C(31)];
+            phase += phase_step;
+            alert_pcm_buffer[index * 2] = sample;
+            alert_pcm_buffer[index * 2 + 1] = sample;
+        }
+        if (esp_codec_dev_write(
+                speaker, alert_pcm_buffer, (int)(samples * AUDIO_CHANNEL_COUNT * sizeof(int16_t))
+            ) != ESP_CODEC_DEV_OK) return false;
+        remaining -= samples;
+    }
+    return true;
+}
+
+static bool play_silence(uint16_t duration_ms)
+{
+    memset(alert_pcm_buffer, 0, sizeof(alert_pcm_buffer));
+    size_t remaining = (size_t)duration_ms * 16;
+    while (remaining > 0) {
+        if (!alert_can_continue()) return false;
+        size_t samples = remaining < ALERT_CHUNK_SAMPLES ? remaining : ALERT_CHUNK_SAMPLES;
+        if (esp_codec_dev_write(
+                speaker, alert_pcm_buffer, (int)(samples * AUDIO_CHANNEL_COUNT * sizeof(int16_t))
+            ) != ESP_CODEC_DEV_OK) return false;
+        remaining -= samples;
+    }
+    return true;
+}
+
+static void alert_task(void *context)
+{
+    (void)context;
+    cr_audio_alert_t alert;
+    while (true) {
+        if (xQueueReceive(alert_queue, &alert, portMAX_DELAY) != pdTRUE) continue;
+        if (!alert_can_continue()) continue;
+        if (alert == CR_AUDIO_ALERT_COMPLETED) {
+            (void)(play_tone(660, 90) && play_silence(45) && play_tone(880, 150));
+        } else {
+            (void)(play_tone(880, 80) && play_silence(35)
+                && play_tone(660, 80) && play_silence(35) && play_tone(880, 110));
+        }
     }
 }
 
@@ -174,6 +248,8 @@ esp_err_t cr_audio_capture_init(void)
     if (result != ESP_OK) return result;
     microphone = bsp_audio_codec_microphone_init();
     if (microphone == NULL) return ESP_FAIL;
+    speaker = bsp_audio_codec_speaker_init();
+    if (speaker == NULL) return ESP_FAIL;
     esp_codec_dev_sample_info_t sample_info = {
         .bits_per_sample = 16,
         .channel = AUDIO_CHANNEL_COUNT,
@@ -181,18 +257,38 @@ esp_err_t cr_audio_capture_init(void)
     };
     if (esp_codec_dev_open(microphone, &sample_info) != ESP_CODEC_DEV_OK) return ESP_FAIL;
     if (esp_codec_dev_set_in_gain(microphone, MICROPHONE_GAIN_DB) != ESP_CODEC_DEV_OK) return ESP_FAIL;
+    if (esp_codec_dev_open(speaker, &sample_info) != ESP_CODEC_DEV_OK) return ESP_FAIL;
+    if (esp_codec_dev_set_out_vol(speaker, SPEAKER_VOLUME) != ESP_CODEC_DEV_OK) return ESP_FAIL;
     log_internal_heap("audio codec opened");
     lock = xSemaphoreCreateMutex();
     if (lock == NULL) {
         log_internal_heap("audio mutex allocation failed");
         return ESP_ERR_NO_MEM;
     }
+    alert_queue = xQueueCreate(1, sizeof(cr_audio_alert_t));
+    if (alert_queue == NULL) return ESP_ERR_NO_MEM;
     if (xTaskCreate(capture_task, "audio_capture", 4096, NULL, 6, NULL) != pdPASS) {
         log_internal_heap("audio task allocation failed");
         return ESP_ERR_NO_MEM;
     }
+    if (xTaskCreate(alert_task, "audio_alert", 3072, NULL, 5, NULL) != pdPASS) {
+        return ESP_ERR_NO_MEM;
+    }
     log_internal_heap("audio init ready");
     return ESP_OK;
+}
+
+esp_err_t cr_audio_alert_play(cr_audio_alert_t alert)
+{
+    if (alert_queue == NULL || lock == NULL || speaker == NULL) return ESP_ERR_INVALID_STATE;
+    if (alert != CR_AUDIO_ALERT_COMPLETED && alert != CR_AUDIO_ALERT_REQUIRES_INPUT) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    xSemaphoreTake(lock, portMAX_DELAY);
+    bool idle = mode == CAPTURE_IDLE;
+    xSemaphoreGive(lock);
+    if (!idle) return ESP_ERR_INVALID_STATE;
+    return xQueueOverwrite(alert_queue, &alert) == pdPASS ? ESP_OK : ESP_FAIL;
 }
 
 esp_err_t cr_audio_capture_prepare(uint32_t *first_sequence)

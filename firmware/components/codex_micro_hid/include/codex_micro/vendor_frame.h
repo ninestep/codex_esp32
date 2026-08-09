@@ -20,6 +20,8 @@ extern const uint8_t cr_micro_hid_report_map[CR_MICRO_HID_REPORT_MAP_BYTES];
 typedef enum {
     CR_MICRO_KEYBOARD_DELETE = 0,
     CR_MICRO_KEYBOARD_CLEAR,
+    CR_MICRO_KEYBOARD_ENTER,
+    CR_MICRO_KEYBOARD_ESCAPE,
 } cr_micro_keyboard_action_t;
 
 typedef struct {
