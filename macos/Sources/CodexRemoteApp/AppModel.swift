@@ -120,6 +120,17 @@ final class AppModel: ObservableObject {
         return "\(battery)%"
     }
 
+    var isDeviceConnected: Bool {
+        if case .ready = snapshot.transportState {
+            return true
+        }
+        return false
+    }
+
+    var isAccessibilityTrusted: Bool {
+        AXIsProcessTrusted()
+    }
+
     var audioReadinessText: String {
         switch doubaoLoginState {
         case .loggedOut:
@@ -134,6 +145,10 @@ final class AppModel: ObservableObject {
         guard audioStatus == .ready else { return audioStatus.userMessage }
         guard AXIsProcessTrusted() else { return "需要辅助功能权限" }
         return "豆包语音识别已就绪"
+    }
+
+    var isSpeechInputReady: Bool {
+        doubaoLoginState == .ready && audioStatus == .ready && isAccessibilityTrusted
     }
 
     var isDoubaoHotkeyInputValid: Bool {

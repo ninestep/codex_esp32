@@ -154,6 +154,39 @@ final class AppSourceWiringTests: XCTestCase {
         }
     }
 
+    func testEnhancedModeUIOnlyExposesCurrentDeviceAndSpeechControls() throws {
+        let macosRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let menuSource = try String(
+            contentsOf: macosRoot.appendingPathComponent(
+                "Sources/CodexRemoteApp/MenuBarContentView.swift"
+            ),
+            encoding: .utf8
+        )
+        let settingsSource = try String(
+            contentsOf: macosRoot.appendingPathComponent(
+                "Sources/CodexRemoteApp/SettingsView.swift"
+            ),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(menuSource.contains("长按说话 · 单击确认 · 双击取消"))
+        XCTAssertTrue(menuSource.contains("Text(\"电量\")"))
+        XCTAssertTrue(menuSource.contains("model.batteryText"))
+        XCTAssertFalse(menuSource.contains("本地服务"))
+        XCTAssertFalse(menuSource.contains("snapshot.sessions"))
+
+        for expectedText in ["设备连接", "语音识别", "实体按键", "登录豆包", "辅助功能权限"] {
+            XCTAssertTrue(settingsSource.contains(expectedText), expectedText)
+        }
+        for removedText in ["本地 Socket", "Codex CLI", "安装与诊断", "清理 Codex Remote 配置", "BlackHole"] {
+            XCTAssertFalse(settingsSource.contains(removedText), removedText)
+        }
+        XCTAssertFalse(settingsSource.contains("model.saveSettings()"))
+    }
+
     func testEnhancedRuntimeUsesDoubaoSpeechSessionAndFocusedKeyboardEmitter() throws {
         let macosRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
