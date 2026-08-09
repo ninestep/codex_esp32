@@ -11,6 +11,8 @@ typedef struct {
     lv_obj_t *directory;
     lv_obj_t *status;
     uint16_t session_key;
+    uint8_t state;
+    lv_color_t status_color;
     bool active;
 } card_view_t;
 
@@ -164,6 +166,8 @@ static void card_clicked(lv_event_t *event)
         selected_micro_agent = (uint8_t)(card - cards);
         micro_action_page_active = true;
         micro_view = MICRO_VIEW_ACTIONS;
+        lv_label_set_text(micro_action_status, state_text(card->state));
+        lv_obj_set_style_text_color(micro_action_status, card->status_color, 0);
         lv_label_set_text_fmt(
             micro_action_title,
             "AGENT %u",
@@ -821,6 +825,8 @@ void cr_ui_update(const cr_device_state_t *state)
         const cr_device_session_t *session = &state->sessions[index];
         card->active = true;
         card->session_key = session->session_key;
+        card->state = session->state;
+        card->status_color = state_border_color(session->state);
         lv_obj_set_size(card->card, 214, 184);
         lv_obj_set_pos(card->card, (index % 2) * 224, (index / 2) * 194);
         lv_obj_align(card->title, LV_ALIGN_TOP_LEFT, 0, 38);
@@ -902,6 +908,7 @@ void cr_ui_update_micro(const cr_micro_state_t *state)
         uint8_t slot_state = micro_light_state(slot);
         card->active = true;
         card->session_key = (uint16_t)(index + 1);
+        card->state = slot_state;
         lv_obj_set_size(card->card, 214, 116);
         lv_obj_set_pos(card->card, (index % 2) * 224, (index / 2) * 126);
         lv_obj_align(card->title, LV_ALIGN_BOTTOM_LEFT, 0, -4);
@@ -909,14 +916,16 @@ void cr_ui_update_micro(const cr_micro_state_t *state)
         lv_label_set_text_fmt(card->title, "AGENT %u", (unsigned)(index + 1));
         lv_label_set_text(card->status, state_text(slot_state));
         if (!slot->configured) {
+            card->status_color = lv_color_hex(0xa1a1aa);
             lv_obj_set_style_bg_color(card->card, lv_color_hex(0x18181b), 0);
             lv_obj_set_style_border_color(card->card, lv_color_hex(0x52525b), 0);
-            lv_obj_set_style_text_color(card->status, lv_color_hex(0xa1a1aa), 0);
+            lv_obj_set_style_text_color(card->status, card->status_color, 0);
         } else {
             lv_color_t color = lv_color_hex(slot->color);
+            card->status_color = color;
             lv_obj_set_style_bg_color(card->card, lv_color_mix(color, lv_color_hex(0x09090b), 96), 0);
             lv_obj_set_style_border_color(card->card, color, 0);
-            lv_obj_set_style_text_color(card->status, color, 0);
+            lv_obj_set_style_text_color(card->status, card->status_color, 0);
         }
         lv_obj_remove_flag(card->card, LV_OBJ_FLAG_HIDDEN);
     }
