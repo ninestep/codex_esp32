@@ -50,7 +50,7 @@ int main(void)
     );
     assert(strstr(cmake_source, "-Wframe-larger-than=1024") != NULL);
 
-    char app_source[16384];
+    char app_source[32768];
     read_source("firmware/main/app_main.c", app_source, sizeof(app_source));
     const char *audio_init = strstr(app_source, "cr_audio_capture_init()");
     const char *display_init = strstr(app_source, "cr_display_start()");

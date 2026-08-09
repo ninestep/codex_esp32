@@ -101,11 +101,36 @@ static void test_all_native_control_events_are_encoded(void)
     assert(strstr(json, "\"k\":\"ENC_CW\"") != NULL);
     assert(strstr(json, "\"act\":2") != NULL);
 
-    assert(cr_micro_rpc_encode_direction(
-        CR_MICRO_DIRECTION_LEFT, true, json, sizeof(json), &length
+    assert(cr_micro_rpc_encode_encoder_press(
+        true, json, sizeof(json), &length
     ) == CR_MICRO_RPC_OK);
-    assert(strstr(json, "\"method\":\"v.oai.rad\"") != NULL);
-    assert(strstr(json, "\"a\":180") != NULL);
+    assert(strstr(json, "\"k\":\"ENC_PRESS\"") != NULL);
+    assert(strstr(json, "\"act\":1") != NULL);
+    assert(cr_micro_rpc_encode_encoder_press(
+        false, json, sizeof(json), &length
+    ) == CR_MICRO_RPC_OK);
+    assert(strstr(json, "\"k\":\"ENC_PRESS\"") != NULL);
+    assert(strstr(json, "\"act\":0") != NULL);
+
+    static const char *const angles[] = {
+        "\"a\":0.75", "\"a\":0", "\"a\":0.25", "\"a\":0.5",
+    };
+    for (int direction = CR_MICRO_DIRECTION_UP;
+         direction <= CR_MICRO_DIRECTION_LEFT; direction++) {
+        assert(cr_micro_rpc_encode_direction(
+            (cr_micro_direction_t)direction, true,
+            json, sizeof(json), &length
+        ) == CR_MICRO_RPC_OK);
+        assert(strstr(json, "\"method\":\"v.oai.rad\"") != NULL);
+        assert(strstr(json, angles[direction]) != NULL);
+        assert(strstr(json, "\"d\":1") != NULL);
+        assert(cr_micro_rpc_encode_direction(
+            (cr_micro_direction_t)direction, false,
+            json, sizeof(json), &length
+        ) == CR_MICRO_RPC_OK);
+        assert(strstr(json, angles[direction]) != NULL);
+        assert(strstr(json, "\"d\":0") != NULL);
+    }
 }
 
 int main(void)

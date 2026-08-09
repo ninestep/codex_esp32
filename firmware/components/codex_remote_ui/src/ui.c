@@ -13,6 +13,12 @@ typedef struct {
     bool active;
 } card_view_t;
 
+typedef enum {
+    MICRO_VIEW_ACTIONS = 0,
+    MICRO_VIEW_ENCODER,
+    MICRO_VIEW_JOYSTICK,
+} micro_view_t;
+
 static cr_ui_callbacks_t actions;
 static lv_obj_t *home_page;
 static lv_obj_t *detail_page;
@@ -20,6 +26,13 @@ static lv_obj_t *detail_content_page;
 static lv_obj_t *shortcut_page;
 static lv_obj_t *screensaver_page;
 static lv_obj_t *mode_page;
+static lv_obj_t *micro_action_page;
+static lv_obj_t *micro_action_title;
+static lv_obj_t *micro_action_status;
+static lv_obj_t *micro_action_menu;
+static lv_obj_t *micro_encoder_panel;
+static lv_obj_t *micro_encoder_ring;
+static lv_obj_t *micro_joystick_panel;
 static lv_obj_t *mode_choices;
 static lv_obj_t *mode_confirmation;
 static lv_obj_t *mode_confirmation_label;
@@ -35,6 +48,13 @@ static uint16_t selected_session_key;
 static bool interaction_locked;
 static bool shortcut_page_active;
 static bool micro_mode_active;
+static bool micro_connected;
+static bool micro_action_page_active;
+static uint8_t selected_micro_agent = UINT8_MAX;
+static int8_t pressed_micro_control = -1;
+static int8_t pressed_micro_direction = -1;
+static bool pressed_micro_encoder;
+static micro_view_t micro_view = MICRO_VIEW_ACTIONS;
 
 static void note_interaction(void)
 {
@@ -162,11 +182,221 @@ static void show_detail_content(void)
 static void card_clicked(lv_event_t *event)
 {
     note_interaction();
-    if (interaction_locked || micro_mode_active) return;
+    if (interaction_locked) return;
     card_view_t *card = lv_event_get_user_data(event);
+    if (micro_mode_active) {
+        if (!micro_connected || !card->active) return;
+        selected_micro_agent = (uint8_t)(card - cards);
+        micro_action_page_active = true;
+        micro_view = MICRO_VIEW_ACTIONS;
+        lv_label_set_text_fmt(
+            micro_action_title,
+            "AGENT %u",
+            (unsigned)(selected_micro_agent + 1)
+        );
+        lv_obj_remove_flag(micro_action_menu, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(micro_encoder_panel, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(micro_joystick_panel, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(home_page, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_remove_flag(micro_action_page, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
     if (card->active && actions.select_session != NULL) {
         actions.select_session(card->session_key, actions.context);
     }
+}
+
+static void micro_action_back_clicked(lv_event_t *event)
+{
+    (void)event;
+    note_interaction();
+    if (interaction_locked || pressed_micro_control >= 0
+        || pressed_micro_direction >= 0 || pressed_micro_encoder) return;
+    if (micro_view != MICRO_VIEW_ACTIONS) {
+        micro_view = MICRO_VIEW_ACTIONS;
+        lv_label_set_text_fmt(
+            micro_action_title,
+            "AGENT %u",
+            (unsigned)(selected_micro_agent + 1)
+        );
+        lv_obj_remove_flag(micro_action_menu, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(micro_encoder_panel, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(micro_joystick_panel, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    micro_action_page_active = false;
+    selected_micro_agent = UINT8_MAX;
+    lv_obj_add_flag(micro_action_page, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_remove_flag(home_page, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void micro_control_key(lv_event_t *event)
+{
+    if (!micro_mode_active || !micro_connected || interaction_locked
+        || actions.micro_control_key == NULL) return;
+    cr_micro_control_t control = (cr_micro_control_t)(uintptr_t)lv_event_get_user_data(event);
+    lv_event_code_t code = lv_event_get_code(event);
+    if (code == LV_EVENT_PRESSED) {
+        if (pressed_micro_control >= 0 || pressed_micro_direction >= 0
+            || pressed_micro_encoder) return;
+        note_interaction();
+        pressed_micro_control = (int8_t)control;
+        actions.micro_control_key(control, true, actions.context);
+    } else if ((code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST)
+               && pressed_micro_control == (int8_t)control) {
+        pressed_micro_control = -1;
+        actions.micro_control_key(control, false, actions.context);
+    }
+}
+
+static void micro_keyboard_action(lv_event_t *event)
+{
+    note_interaction();
+    if (!micro_mode_active || !micro_connected || interaction_locked
+        || pressed_micro_control >= 0 || pressed_micro_direction >= 0
+        || pressed_micro_encoder || actions.micro_keyboard_action == NULL) return;
+    cr_micro_keyboard_action_t action =
+        (cr_micro_keyboard_action_t)(uintptr_t)lv_event_get_user_data(event);
+    actions.micro_keyboard_action(action, actions.context);
+}
+
+static void micro_encoder_press(lv_event_t *event)
+{
+    if (!micro_mode_active || !micro_connected || interaction_locked
+        || actions.micro_encoder_press == NULL) return;
+    lv_event_code_t code = lv_event_get_code(event);
+    if (code == LV_EVENT_PRESSED) {
+        if (pressed_micro_control >= 0 || pressed_micro_direction >= 0
+            || pressed_micro_encoder) return;
+        note_interaction();
+        pressed_micro_encoder = true;
+        actions.micro_encoder_press(true, actions.context);
+    } else if ((code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST)
+               && pressed_micro_encoder) {
+        pressed_micro_encoder = false;
+        actions.micro_encoder_press(false, actions.context);
+    }
+}
+
+static void micro_encoder_turn(lv_event_t *event)
+{
+    if (!micro_mode_active || !micro_connected || interaction_locked
+        || pressed_micro_control >= 0 || pressed_micro_direction >= 0
+        || pressed_micro_encoder || actions.micro_encoder_turn == NULL) return;
+    lv_event_code_t code = lv_event_get_code(event);
+    if (code != LV_EVENT_SHORT_CLICKED && code != LV_EVENT_LONG_PRESSED
+        && code != LV_EVENT_LONG_PRESSED_REPEAT) return;
+    note_interaction();
+    cr_micro_encoder_action_t action =
+        (cr_micro_encoder_action_t)(uintptr_t)lv_event_get_user_data(event);
+    actions.micro_encoder_turn(action, actions.context);
+}
+
+static lv_obj_t *make_micro_encoder_zone(
+    lv_obj_t *parent,
+    const char *symbol,
+    int32_t x,
+    cr_micro_encoder_action_t action
+)
+{
+    lv_obj_t *zone = lv_button_create(parent);
+    lv_obj_set_size(zone, 160, 320);
+    lv_obj_set_pos(zone, x, 0);
+    lv_obj_set_style_bg_opa(zone, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(zone, 0, 0);
+    lv_obj_set_style_shadow_width(zone, 0, 0);
+    lv_obj_t *label = lv_label_create(zone);
+    lv_label_set_text(label, symbol);
+    lv_obj_set_style_text_font(label, LV_FONT_DEFAULT, 0);
+    lv_obj_align(label, x == 0 ? LV_ALIGN_LEFT_MID : LV_ALIGN_RIGHT_MID,
+                 x == 0 ? 28 : -28, 0);
+    void *user_data = (void *)(uintptr_t)action;
+    lv_obj_add_event_cb(zone, micro_encoder_turn, LV_EVENT_SHORT_CLICKED, user_data);
+    lv_obj_add_event_cb(zone, micro_encoder_turn, LV_EVENT_LONG_PRESSED, user_data);
+    lv_obj_add_event_cb(zone, micro_encoder_turn, LV_EVENT_LONG_PRESSED_REPEAT, user_data);
+    return zone;
+}
+
+static void micro_direction(lv_event_t *event)
+{
+    if (!micro_mode_active || !micro_connected || interaction_locked
+        || actions.micro_direction == NULL) return;
+    cr_micro_direction_t direction =
+        (cr_micro_direction_t)(uintptr_t)lv_event_get_user_data(event);
+    lv_event_code_t code = lv_event_get_code(event);
+    if (code == LV_EVENT_PRESSED) {
+        if (pressed_micro_control >= 0 || pressed_micro_direction >= 0
+            || pressed_micro_encoder) return;
+        note_interaction();
+        pressed_micro_direction = (int8_t)direction;
+        actions.micro_direction(direction, true, actions.context);
+    } else if ((code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST)
+               && pressed_micro_direction == (int8_t)direction) {
+        pressed_micro_direction = -1;
+        actions.micro_direction(direction, false, actions.context);
+    }
+}
+
+static void micro_view_opened(lv_event_t *event)
+{
+    if (pressed_micro_control >= 0 || pressed_micro_direction >= 0
+        || pressed_micro_encoder) return;
+    note_interaction();
+    micro_view = (micro_view_t)(uintptr_t)lv_event_get_user_data(event);
+    lv_obj_add_flag(micro_action_menu, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(micro_encoder_panel, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(micro_joystick_panel, LV_OBJ_FLAG_HIDDEN);
+    if (micro_view == MICRO_VIEW_ENCODER) {
+        lv_label_set_text(micro_action_title, "旋钮");
+        lv_obj_remove_flag(micro_encoder_panel, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_label_set_text(micro_action_title, "摇杆");
+        lv_obj_remove_flag(micro_joystick_panel, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+static lv_obj_t *make_micro_action_button(
+    const char *text,
+    cr_micro_control_t control,
+    int32_t x,
+    int32_t y,
+    uint32_t color
+)
+{
+    lv_obj_t *button = make_button(micro_action_menu, text);
+    lv_obj_set_size(button, 210, 76);
+    lv_obj_set_pos(button, x, y);
+    lv_obj_set_style_bg_color(button, lv_color_hex(color), 0);
+    lv_obj_add_event_cb(
+        button, micro_control_key, LV_EVENT_PRESSED, (void *)(uintptr_t)control
+    );
+    lv_obj_add_event_cb(
+        button, micro_control_key, LV_EVENT_RELEASED, (void *)(uintptr_t)control
+    );
+    lv_obj_add_event_cb(
+        button, micro_control_key, LV_EVENT_PRESS_LOST, (void *)(uintptr_t)control
+    );
+    return button;
+}
+
+static lv_obj_t *make_micro_hold_button(
+    lv_obj_t *parent,
+    const char *text,
+    int32_t x,
+    int32_t y,
+    int32_t width,
+    int32_t height,
+    lv_event_cb_t callback,
+    void *user_data
+)
+{
+    lv_obj_t *button = make_button(parent, text);
+    lv_obj_set_size(button, width, height);
+    lv_obj_set_pos(button, x, y);
+    lv_obj_add_event_cb(button, callback, LV_EVENT_PRESSED, user_data);
+    lv_obj_add_event_cb(button, callback, LV_EVENT_RELEASED, user_data);
+    lv_obj_add_event_cb(button, callback, LV_EVENT_PRESS_LOST, user_data);
+    return button;
 }
 
 static void micro_card_key(lv_event_t *event)
@@ -441,6 +671,108 @@ void cr_ui_init(const cr_ui_callbacks_t *config)
     lv_obj_align(saver_subtitle, LV_ALIGN_CENTER, 0, 32);
     lv_obj_add_flag(screensaver_page, LV_OBJ_FLAG_HIDDEN);
 
+    micro_action_page = lv_obj_create(screen);
+    lv_obj_remove_style_all(micro_action_page);
+    lv_obj_set_size(micro_action_page, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_style_bg_color(micro_action_page, lv_color_hex(0x09090b), 0);
+    lv_obj_set_style_bg_opa(micro_action_page, LV_OPA_COVER, 0);
+
+    lv_obj_t *micro_back = make_button(micro_action_page, "返回");
+    lv_obj_set_size(micro_back, 90, 46);
+    lv_obj_align(micro_back, LV_ALIGN_TOP_LEFT, 14, 14);
+    lv_obj_add_event_cb(micro_back, micro_action_back_clicked, LV_EVENT_CLICKED, NULL);
+
+    micro_action_title = lv_label_create(micro_action_page);
+    lv_label_set_text(micro_action_title, "AGENT 1");
+    lv_obj_align(micro_action_title, LV_ALIGN_TOP_LEFT, 120, 16);
+
+    micro_action_status = lv_label_create(micro_action_page);
+    lv_label_set_text(micro_action_status, "离线");
+    lv_obj_align(micro_action_status, LV_ALIGN_TOP_RIGHT, -14, 20);
+
+    micro_action_menu = lv_obj_create(micro_action_page);
+    lv_obj_remove_style_all(micro_action_menu);
+    lv_obj_set_size(micro_action_menu, LV_PCT(100), LV_PCT(100));
+    make_micro_action_button("批准", CR_MICRO_CONTROL_APPROVE, 20, 76, 0x166534);
+    make_micro_action_button("拒绝", CR_MICRO_CONTROL_DECLINE, 250, 76, 0x991b1b);
+    make_micro_action_button("继续", CR_MICRO_CONTROL_CONTINUE, 20, 164, 0x27272a);
+    make_positioned_button(
+        micro_action_menu, "删除", 250, 164, 210, 76,
+        micro_keyboard_action, (void *)(uintptr_t)CR_MICRO_KEYBOARD_DELETE
+    );
+    make_positioned_button(
+        micro_action_menu, "清除", 20, 252, 210, 76,
+        micro_keyboard_action, (void *)(uintptr_t)CR_MICRO_KEYBOARD_CLEAR
+    );
+    make_positioned_button(
+        micro_action_menu, "旋钮", 20, 340, 210, 76,
+        micro_view_opened, (void *)(uintptr_t)MICRO_VIEW_ENCODER
+    );
+    make_positioned_button(
+        micro_action_menu, "摇杆", 250, 340, 210, 76,
+        micro_view_opened, (void *)(uintptr_t)MICRO_VIEW_JOYSTICK
+    );
+
+    micro_encoder_panel = lv_obj_create(micro_action_page);
+    lv_obj_remove_style_all(micro_encoder_panel);
+    lv_obj_set_size(micro_encoder_panel, LV_PCT(100), LV_PCT(100));
+    micro_encoder_ring = lv_obj_create(micro_encoder_panel);
+    lv_obj_set_size(micro_encoder_ring, 320, 320);
+    lv_obj_set_pos(micro_encoder_ring, 80, 92);
+    lv_obj_set_style_radius(micro_encoder_ring, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(micro_encoder_ring, lv_color_hex(0x18181b), 0);
+    lv_obj_set_style_bg_opa(micro_encoder_ring, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(micro_encoder_ring, 8, 0);
+    lv_obj_set_style_border_color(micro_encoder_ring, lv_color_hex(0x52525b), 0);
+    lv_obj_set_style_pad_all(micro_encoder_ring, 0, 0);
+    make_micro_encoder_zone(
+        micro_encoder_ring, LV_SYMBOL_LEFT, 0,
+        CR_MICRO_ENCODER_COUNTERCLOCKWISE
+    );
+    make_micro_encoder_zone(
+        micro_encoder_ring, LV_SYMBOL_RIGHT, 160,
+        CR_MICRO_ENCODER_CLOCKWISE
+    );
+    lv_obj_t *encoder_center = make_micro_hold_button(
+        micro_encoder_ring, "点击 / 长按", 85, 85, 150, 150,
+        micro_encoder_press, NULL
+    );
+    lv_obj_set_style_radius(encoder_center, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(encoder_center, lv_color_hex(0x27272a), 0);
+    lv_obj_set_style_border_width(encoder_center, 4, 0);
+    lv_obj_set_style_border_color(encoder_center, lv_color_hex(0xa1a1aa), 0);
+    lv_obj_move_foreground(encoder_center);
+    lv_obj_add_flag(micro_encoder_panel, LV_OBJ_FLAG_HIDDEN);
+
+    micro_joystick_panel = lv_obj_create(micro_action_page);
+    lv_obj_remove_style_all(micro_joystick_panel);
+    lv_obj_set_size(micro_joystick_panel, LV_PCT(100), LV_PCT(100));
+    lv_obj_t *joystick_up = make_micro_hold_button(
+        micro_joystick_panel, LV_SYMBOL_UP, 190, 82, 100, 86,
+        micro_direction, (void *)(uintptr_t)CR_MICRO_DIRECTION_UP
+    );
+    lv_obj_t *joystick_left = make_micro_hold_button(
+        micro_joystick_panel, LV_SYMBOL_LEFT, 74, 190, 100, 86,
+        micro_direction, (void *)(uintptr_t)CR_MICRO_DIRECTION_LEFT
+    );
+    lv_obj_t *joystick_right = make_micro_hold_button(
+        micro_joystick_panel, LV_SYMBOL_RIGHT, 306, 190, 100, 86,
+        micro_direction, (void *)(uintptr_t)CR_MICRO_DIRECTION_RIGHT
+    );
+    lv_obj_t *joystick_down = make_micro_hold_button(
+        micro_joystick_panel, LV_SYMBOL_DOWN, 190, 298, 100, 86,
+        micro_direction, (void *)(uintptr_t)CR_MICRO_DIRECTION_DOWN
+    );
+    lv_obj_set_style_text_font(lv_obj_get_child(joystick_up, 0), LV_FONT_DEFAULT, 0);
+    lv_obj_set_style_text_font(lv_obj_get_child(joystick_left, 0), LV_FONT_DEFAULT, 0);
+    lv_obj_set_style_text_font(lv_obj_get_child(joystick_right, 0), LV_FONT_DEFAULT, 0);
+    lv_obj_set_style_text_font(lv_obj_get_child(joystick_down, 0), LV_FONT_DEFAULT, 0);
+    lv_obj_add_flag(micro_joystick_panel, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(micro_back);
+    lv_obj_move_foreground(micro_action_title);
+    lv_obj_move_foreground(micro_action_status);
+    lv_obj_add_flag(micro_action_page, LV_OBJ_FLAG_HIDDEN);
+
     mode_page = lv_obj_create(screen);
     lv_obj_remove_style_all(mode_page);
     lv_obj_set_size(mode_page, LV_PCT(100), LV_PCT(100));
@@ -487,6 +819,17 @@ void cr_ui_init(const cr_ui_callbacks_t *config)
 void cr_ui_update(const cr_device_state_t *state)
 {
     micro_mode_active = false;
+    micro_connected = false;
+    micro_action_page_active = false;
+    selected_micro_agent = UINT8_MAX;
+    pressed_micro_control = -1;
+    pressed_micro_direction = -1;
+    pressed_micro_encoder = false;
+    micro_view = MICRO_VIEW_ACTIONS;
+    lv_obj_remove_flag(micro_action_menu, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(micro_encoder_panel, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(micro_joystick_panel, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(micro_action_page, LV_OBJ_FLAG_HIDDEN);
     lv_label_set_text(home_heading, "CODEX REMOTE");
     interaction_locked = state->ptt_active;
     lv_label_set_text(connection_label, state->has_snapshot ? "Mac 已连接" : "等待 Mac...");
@@ -546,11 +889,22 @@ void cr_ui_update_micro(const cr_micro_state_t *state)
 {
     if (state == NULL) return;
     micro_mode_active = true;
+    micro_connected = state->connected;
     interaction_locked = false;
     selected_session_key = 0;
     show_detail_content();
     lv_obj_add_flag(detail_page, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_remove_flag(home_page, LV_OBJ_FLAG_HIDDEN);
+    if (!micro_connected) {
+        micro_action_page_active = false;
+        selected_micro_agent = UINT8_MAX;
+        pressed_micro_control = -1;
+        pressed_micro_direction = -1;
+        pressed_micro_encoder = false;
+        micro_view = MICRO_VIEW_ACTIONS;
+        lv_obj_remove_flag(micro_action_menu, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(micro_encoder_panel, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(micro_joystick_panel, LV_OBJ_FLAG_HIDDEN);
+    }
     lv_label_set_text(home_heading, "CODEX MICRO");
     lv_label_set_text(
         connection_label,
@@ -587,6 +941,22 @@ void cr_ui_update_micro(const cr_micro_state_t *state)
         }
         lv_obj_remove_flag(card->card, LV_OBJ_FLAG_HIDDEN);
     }
+
+    if (micro_action_page_active && selected_micro_agent < CR_MICRO_SLOT_COUNT) {
+        const cr_micro_light_t *slot = &state->slots[selected_micro_agent];
+        uint8_t slot_state = micro_light_state(slot);
+        lv_label_set_text(micro_action_status, state_text(slot_state));
+        lv_obj_set_style_text_color(
+            micro_action_status,
+            slot->configured ? lv_color_hex(slot->color) : lv_color_hex(0xa1a1aa),
+            0
+        );
+        lv_obj_add_flag(home_page, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_remove_flag(micro_action_page, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(micro_action_page, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_remove_flag(home_page, LV_OBJ_FLAG_HIDDEN);
+    }
 }
 
 void cr_ui_set_connection_mode(const cr_connection_mode_state_t *state)
@@ -616,6 +986,7 @@ void cr_ui_set_power(cr_power_mode_t mode, size_t asset_index)
 {
     (void)asset_index;
     if (mode == CR_POWER_SCREENSAVER || mode == CR_POWER_OFF) {
+        lv_obj_move_foreground(screensaver_page);
         lv_obj_remove_flag(screensaver_page, LV_OBJ_FLAG_HIDDEN);
     } else {
         lv_obj_add_flag(screensaver_page, LV_OBJ_FLAG_HIDDEN);

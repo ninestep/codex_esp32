@@ -79,6 +79,12 @@ cr_micro_rpc_result_t cr_micro_rpc_encode_encoder(
     size_t capacity,
     size_t *length
 );
+cr_micro_rpc_result_t cr_micro_rpc_encode_encoder_press(
+    bool pressed,
+    char *json,
+    size_t capacity,
+    size_t *length
+);
 cr_micro_rpc_result_t cr_micro_rpc_encode_direction(
     cr_micro_direction_t direction,
     bool pressed,

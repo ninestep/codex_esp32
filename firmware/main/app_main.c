@@ -36,6 +36,7 @@ static uint32_t pending_first_audio_sequence;
 static bool audio_available;
 static bool audio_prepared;
 static bool companion_transport_started;
+static bool micro_button_ptt_active;
 static QueueHandle_t ui_state_queue;
 static StaticQueue_t ui_state_queue_storage;
 static uint8_t ui_state_queue_buffer[sizeof(cr_device_state_t)];
@@ -109,6 +110,62 @@ static void ui_micro_agent_key(uint8_t agent_index, bool pressed, void *context)
     }
 }
 
+static void ui_micro_control_key(cr_micro_control_t control, bool pressed, void *context)
+{
+    (void)context;
+    esp_err_t result = cr_codex_micro_hid_send_control_key(control, pressed);
+    if (result != ESP_OK) {
+        ESP_LOGW(TAG, "Codex Micro control key unavailable: %s", esp_err_to_name(result));
+    }
+}
+
+static void ui_micro_keyboard_action(cr_micro_keyboard_action_t action, void *context)
+{
+    (void)context;
+    esp_err_t result = cr_codex_micro_hid_send_keyboard_action(action);
+    if (result != ESP_OK) {
+        ESP_LOGW(TAG, "Codex Micro keyboard action unavailable: %s", esp_err_to_name(result));
+    }
+}
+
+static void ui_micro_encoder_press(bool pressed, void *context)
+{
+    (void)context;
+    esp_err_t result = cr_codex_micro_hid_send_encoder_press(pressed);
+    if (result != ESP_OK) {
+        ESP_LOGW(TAG, "Codex Micro encoder press unavailable: %s", esp_err_to_name(result));
+    }
+}
+
+static void ui_micro_encoder_turn(cr_micro_encoder_action_t action, void *context)
+{
+    (void)context;
+    esp_err_t result = cr_codex_micro_hid_send_encoder(action);
+    if (result != ESP_OK) {
+        ESP_LOGW(TAG, "Codex Micro encoder turn unavailable: %s", esp_err_to_name(result));
+    }
+}
+
+static void ui_micro_direction(cr_micro_direction_t direction, bool pressed, void *context)
+{
+    (void)context;
+    esp_err_t result = cr_codex_micro_hid_send_direction(direction, pressed);
+    if (result != ESP_OK) {
+        ESP_LOGW(TAG, "Codex Micro direction unavailable: %s", esp_err_to_name(result));
+    }
+}
+
+static void send_micro_control_click(cr_micro_control_t control)
+{
+    esp_err_t result = cr_codex_micro_hid_send_control_key(control, true);
+    if (result == ESP_OK) {
+        result = cr_codex_micro_hid_send_control_key(control, false);
+    }
+    if (result != ESP_OK) {
+        ESP_LOGW(TAG, "Codex Micro physical button unavailable: %s", esp_err_to_name(result));
+    }
+}
+
 static void refresh_connection_mode_ui(void)
 {
     cr_ui_set_connection_mode(&connection_mode_state);
@@ -131,6 +188,10 @@ static void ui_cancel_connection_mode(void *context)
 
 static void stop_active_ptt_for_mode_change(void)
 {
+    if (micro_button_ptt_active) {
+        (void)cr_codex_micro_hid_send_control_key(CR_MICRO_CONTROL_PTT, false);
+        micro_button_ptt_active = false;
+    }
     if (audio_prepared) {
         cr_audio_capture_discard();
         audio_prepared = false;
@@ -221,6 +282,41 @@ static void execute_input_action(cr_input_action_t action)
         return;
     }
     if (!cr_connection_mode_can_accept_input(&connection_mode_state)) return;
+    if (connection_mode_state.active == CR_CONNECTION_MODE_NATIVE_MICRO) {
+        switch (action) {
+        case CR_INPUT_ENTER:
+            note_interaction(NULL);
+            send_micro_control_click(CR_MICRO_CONTROL_SEND);
+            break;
+        case CR_INPUT_ESCAPE:
+            note_interaction(NULL);
+            send_micro_control_click(CR_MICRO_CONTROL_DECLINE);
+            break;
+        case CR_INPUT_PTT_BEGIN: {
+            note_interaction(NULL);
+            esp_err_t result = cr_codex_micro_hid_send_control_key(CR_MICRO_CONTROL_PTT, true);
+            if (result == ESP_OK) {
+                micro_button_ptt_active = true;
+            } else {
+                ESP_LOGW(TAG, "Codex Micro PTT unavailable: %s", esp_err_to_name(result));
+            }
+            break;
+        }
+        case CR_INPUT_PTT_END:
+            if (micro_button_ptt_active) {
+                esp_err_t result = cr_codex_micro_hid_send_control_key(CR_MICRO_CONTROL_PTT, false);
+                if (result != ESP_OK) {
+                    ESP_LOGW(TAG, "Codex Micro PTT release unavailable: %s", esp_err_to_name(result));
+                }
+                micro_button_ptt_active = false;
+            }
+            note_interaction(NULL);
+            break;
+        default:
+            break;
+        }
+        return;
+    }
     if (!device_state.has_selection) return;
     switch (action) {
     case CR_INPUT_PRE_ROLL_BEGIN:
@@ -298,8 +394,12 @@ static void button_task(void *context)
             .detail_active = device_state.has_selection,
             .session_selected = device_state.has_selection,
             .screen_on = true,
-            .interaction_locked = device_state.ptt_active,
+            .interaction_locked = device_state.ptt_active || micro_button_ptt_active,
         };
+        if (connection_mode_state.active == CR_CONNECTION_MODE_NATIVE_MICRO) {
+            input_context.detail_active = true;
+            input_context.session_selected = true;
+        }
         if (!cr_connection_mode_can_accept_input(&connection_mode_state)) {
             input_context.interaction_locked = true;
         }
@@ -380,6 +480,11 @@ void app_main(void)
         .terminal_key = ui_key,
         .terminal_shortcut = ui_shortcut,
         .micro_agent_key = ui_micro_agent_key,
+        .micro_control_key = ui_micro_control_key,
+        .micro_keyboard_action = ui_micro_keyboard_action,
+        .micro_encoder_press = ui_micro_encoder_press,
+        .micro_encoder_turn = ui_micro_encoder_turn,
+        .micro_direction = ui_micro_direction,
         .request_connection_mode = ui_request_connection_mode,
         .confirm_connection_mode = ui_confirm_connection_mode,
         .cancel_connection_mode = ui_cancel_connection_mode,

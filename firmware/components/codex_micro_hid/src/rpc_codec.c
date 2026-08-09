@@ -368,6 +368,18 @@ cr_micro_rpc_result_t cr_micro_rpc_encode_encoder(
     return encode_hid_key(keys[action], act, -1, json, capacity, length);
 }
 
+cr_micro_rpc_result_t cr_micro_rpc_encode_encoder_press(
+    bool pressed,
+    char *json,
+    size_t capacity,
+    size_t *length
+)
+{
+    return encode_hid_key(
+        "ENC_PRESS", pressed ? 1 : 0, -1, json, capacity, length
+    );
+}
+
 cr_micro_rpc_result_t cr_micro_rpc_encode_direction(
     cr_micro_direction_t direction,
     bool pressed,
@@ -376,7 +388,7 @@ cr_micro_rpc_result_t cr_micro_rpc_encode_direction(
     size_t *length
 )
 {
-    static const uint16_t angles[] = {90, 0, 270, 180};
+    static const double angles[] = {0.75, 0.0, 0.25, 0.5};
     if (direction < CR_MICRO_DIRECTION_UP || direction > CR_MICRO_DIRECTION_LEFT
         || json == NULL || length == NULL) return CR_MICRO_RPC_INVALID_REQUEST;
     cJSON *root = cJSON_CreateObject();

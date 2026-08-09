@@ -19,17 +19,19 @@
 #include "nimble/nimble_port.h"
 #include "nimble/nimble_port_freertos.h"
 #include "services/gap/ble_svc_gap.h"
+#include "services/gatt/ble_svc_gatt.h"
 #include "services/hid/ble_svc_hid.h"
 
 #include <string.h>
 
 #define CR_MICRO_VENDOR_ID UINT16_C(0x303a)
 #define CR_MICRO_PRODUCT_ID UINT16_C(0x8360)
-#define CR_MICRO_RELEASE UINT16_C(0x0101)
+#define CR_MICRO_RELEASE UINT16_C(0x0102)
 #define CR_MICRO_RPC_RESPONSE_BYTES 512
 #define CR_MICRO_RPC_QUEUE_DEPTH 4
 #define CR_MICRO_NOTIFY_READY_BIT BIT0
 #define CR_MICRO_NOTIFY_SETTLE_MS 20
+#define CR_MICRO_KEYBOARD_REPORT_GAP_MS 12
 void ble_store_config_init(void);
 
 typedef struct {
@@ -78,6 +80,7 @@ static TickType_t input_notification_ready_tick;
 static uint8_t battery_percent = 100;
 static bool charging;
 static uint8_t own_address_type;
+static bool service_change_announced;
 
 static int gap_event(struct ble_gap_event *event, void *context);
 static void handle_output_report(const uint8_t *data, size_t length);
@@ -316,6 +319,11 @@ static void hidd_event(
     case ESP_HIDD_CONNECT_EVENT:
         cr_micro_reassembler_init(&reassembler);
         (void)cr_micro_state_set_connected(&micro_state, true);
+        if (!service_change_announced) {
+            ble_svc_gatt_changed(UINT16_C(0x0001), UINT16_C(0xffff));
+            service_change_announced = true;
+            ESP_LOGI(TAG, "GATT service change announced for keyboard report migration");
+        }
         ESP_LOGI(TAG, "Codex Micro host connected");
         if (callbacks.on_connection_changed != NULL) {
             callbacks.on_connection_changed(true, callbacks.context);
@@ -511,12 +519,58 @@ esp_err_t cr_codex_micro_hid_send_control_key(cr_micro_control_t control, bool p
     return send_json(json, length);
 }
 
+esp_err_t cr_codex_micro_hid_send_keyboard_action(cr_micro_keyboard_action_t action)
+{
+    ESP_RETURN_ON_FALSE(
+        hid_device != NULL && esp_hidd_dev_connected(hid_device),
+        ESP_ERR_INVALID_STATE,
+        TAG,
+        "HID host is not connected"
+    );
+    cr_micro_keyboard_sequence_t sequence;
+    ESP_RETURN_ON_FALSE(
+        cr_micro_keyboard_action_encode(action, &sequence) == CR_MICRO_FRAME_OK,
+        ESP_ERR_INVALID_ARG,
+        TAG,
+        "invalid keyboard action"
+    );
+
+    xSemaphoreTake(transmit_lock, portMAX_DELAY);
+    esp_err_t result = ESP_OK;
+    for (size_t index = 0; index < sequence.count; index++) {
+        result = esp_hidd_dev_input_set(
+            hid_device,
+            0,
+            CR_MICRO_KEYBOARD_REPORT_ID,
+            sequence.reports[index],
+            CR_MICRO_KEYBOARD_REPORT_BYTES
+        );
+        if (result != ESP_OK) break;
+        if (index + 1 < sequence.count) {
+            vTaskDelay(pdMS_TO_TICKS(CR_MICRO_KEYBOARD_REPORT_GAP_MS));
+        }
+    }
+    xSemaphoreGive(transmit_lock);
+    return result;
+}
+
 esp_err_t cr_codex_micro_hid_send_encoder(cr_micro_encoder_action_t action)
 {
     char json[160];
     size_t length = 0;
     cr_micro_rpc_result_t result = cr_micro_rpc_encode_encoder(
         action, json, sizeof(json), &length
+    );
+    if (result != CR_MICRO_RPC_OK) return ESP_ERR_INVALID_ARG;
+    return send_json(json, length);
+}
+
+esp_err_t cr_codex_micro_hid_send_encoder_press(bool pressed)
+{
+    char json[160];
+    size_t length = 0;
+    cr_micro_rpc_result_t result = cr_micro_rpc_encode_encoder_press(
+        pressed, json, sizeof(json), &length
     );
     if (result != CR_MICRO_RPC_OK) return ESP_ERR_INVALID_ARG;
     return send_json(json, length);

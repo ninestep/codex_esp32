@@ -6,13 +6,26 @@
 #include <stdint.h>
 
 #define CR_MICRO_REPORT_ID UINT8_C(6)
+#define CR_MICRO_KEYBOARD_REPORT_ID UINT8_C(7)
 #define CR_MICRO_MESSAGE_TYPE_JSON UINT8_C(2)
 #define CR_MICRO_REPORT_BODY_BYTES ((size_t)63)
+#define CR_MICRO_KEYBOARD_REPORT_BYTES ((size_t)8)
+#define CR_MICRO_KEYBOARD_MAX_REPORTS ((size_t)4)
 #define CR_MICRO_PAYLOAD_BYTES ((size_t)61)
 #define CR_MICRO_MAX_MESSAGE_BYTES ((size_t)4096)
-#define CR_MICRO_HID_REPORT_MAP_BYTES ((size_t)29)
+#define CR_MICRO_HID_REPORT_MAP_BYTES ((size_t)76)
 
 extern const uint8_t cr_micro_hid_report_map[CR_MICRO_HID_REPORT_MAP_BYTES];
+
+typedef enum {
+    CR_MICRO_KEYBOARD_DELETE = 0,
+    CR_MICRO_KEYBOARD_CLEAR,
+} cr_micro_keyboard_action_t;
+
+typedef struct {
+    uint8_t reports[CR_MICRO_KEYBOARD_MAX_REPORTS][CR_MICRO_KEYBOARD_REPORT_BYTES];
+    size_t count;
+} cr_micro_keyboard_sequence_t;
 
 typedef enum {
     CR_MICRO_FRAME_OK = 0,
@@ -47,6 +60,10 @@ cr_micro_frame_result_t cr_micro_reassembler_push(
     cr_micro_reassembler_t *state,
     const uint8_t *report,
     size_t report_length
+);
+cr_micro_frame_result_t cr_micro_keyboard_action_encode(
+    cr_micro_keyboard_action_t action,
+    cr_micro_keyboard_sequence_t *sequence
 );
 
 #endif

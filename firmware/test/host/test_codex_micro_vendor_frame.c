@@ -12,6 +12,12 @@ static void test_report_body_is_fixed_63_bytes(void)
         0x15, 0x00, 0x26, 0xff, 0x00, 0x75, 0x08, 0x95, 0x3f,
         0x09, 0x01, 0x81, 0x02, 0x95, 0x3f, 0x09, 0x02, 0x91,
         0x02, 0xc0,
+        0x05, 0x01, 0x09, 0x06, 0xa1, 0x01, 0x85, 0x07, 0x05,
+        0x07, 0x19, 0xe0, 0x29, 0xe7, 0x15, 0x00, 0x25, 0x01,
+        0x75, 0x01, 0x95, 0x08, 0x81, 0x02, 0x95, 0x01, 0x75,
+        0x08, 0x81, 0x01, 0x95, 0x06, 0x75, 0x08, 0x15, 0x00,
+        0x25, 0x65, 0x05, 0x07, 0x19, 0x00, 0x29, 0x65, 0x81,
+        0x00, 0xc0,
     };
     assert(sizeof(expected_report_map) == sizeof(cr_micro_hid_report_map));
     assert(memcmp(expected_report_map, cr_micro_hid_report_map, sizeof(expected_report_map)) == 0);
@@ -25,6 +31,35 @@ static void test_report_body_is_fixed_63_bytes(void)
     for (size_t index = 5; index < sizeof(report); index++) assert(report[index] == 0);
     assert(cr_micro_vendor_frame_encode(payload, CR_MICRO_PAYLOAD_BYTES + 1, report)
         == CR_MICRO_FRAME_INVALID_LENGTH);
+}
+
+static void test_keyboard_actions_encode_exact_reports(void)
+{
+    cr_micro_keyboard_sequence_t sequence;
+    assert(cr_micro_keyboard_action_encode(
+        CR_MICRO_KEYBOARD_DELETE, &sequence
+    ) == CR_MICRO_FRAME_OK);
+    assert(sequence.count == 2);
+    assert(sequence.reports[0][0] == 0);
+    assert(sequence.reports[0][2] == 0x2a);
+    for (size_t index = 0; index < CR_MICRO_KEYBOARD_REPORT_BYTES; index++) {
+        assert(sequence.reports[1][index] == 0);
+    }
+
+    assert(cr_micro_keyboard_action_encode(
+        CR_MICRO_KEYBOARD_CLEAR, &sequence
+    ) == CR_MICRO_FRAME_OK);
+    assert(sequence.count == 4);
+    assert(sequence.reports[0][0] == 0x08);
+    assert(sequence.reports[0][2] == 0x04);
+    assert(sequence.reports[1][0] == 0 && sequence.reports[1][2] == 0);
+    assert(sequence.reports[2][0] == 0 && sequence.reports[2][2] == 0x2a);
+    assert(sequence.reports[3][0] == 0 && sequence.reports[3][2] == 0);
+    assert(cr_micro_keyboard_action_encode(
+        (cr_micro_keyboard_action_t)99, &sequence
+    ) == CR_MICRO_FRAME_INVALID_ARGUMENT);
+    assert(cr_micro_keyboard_action_encode(CR_MICRO_KEYBOARD_DELETE, NULL)
+        == CR_MICRO_FRAME_INVALID_ARGUMENT);
 }
 
 static void test_reassembles_fragments_and_requires_newline(void)
@@ -166,14 +201,42 @@ static void test_rpc_whitelist_and_responses(void)
     ) == CR_MICRO_RPC_INVALID_REQUEST);
 }
 
+static void test_control_keys_encode_press_and_release(void)
+{
+    static const char *const keys[] = {
+        "ACT06", "ACT07", "ACT08", "ACT09", "ACT10", "ACT12",
+    };
+    char json[160];
+    size_t length = 0;
+    for (size_t index = 0; index < sizeof(keys) / sizeof(keys[0]); index++) {
+        assert(cr_micro_rpc_encode_control_key(
+            (cr_micro_control_t)index, true, json, sizeof(json), &length
+        ) == CR_MICRO_RPC_OK);
+        assert(strstr(json, "\"method\":\"v.oai.hid\"") != NULL);
+        assert(strstr(json, keys[index]) != NULL);
+        assert(strstr(json, "\"act\":1") != NULL);
+
+        assert(cr_micro_rpc_encode_control_key(
+            (cr_micro_control_t)index, false, json, sizeof(json), &length
+        ) == CR_MICRO_RPC_OK);
+        assert(strstr(json, keys[index]) != NULL);
+        assert(strstr(json, "\"act\":0") != NULL);
+    }
+    assert(cr_micro_rpc_encode_control_key(
+        (cr_micro_control_t)6, true, json, sizeof(json), &length
+    ) == CR_MICRO_RPC_INVALID_REQUEST);
+}
+
 int main(void)
 {
     test_report_body_is_fixed_63_bytes();
+    test_keyboard_actions_encode_exact_reports();
     test_reassembles_fragments_and_requires_newline();
     test_reassembles_structurally_complete_json_without_newline();
     test_accepts_explicit_report_id_and_rejects_bad_reports();
     test_empty_missing_newline_invalid_utf8_and_overflow();
     test_rpc_whitelist_and_responses();
+    test_control_keys_encode_press_and_release();
     puts("test_codex_micro_vendor_frame: PASS");
     return 0;
 }
