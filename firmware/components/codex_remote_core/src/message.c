@@ -298,6 +298,29 @@ cr_result_t cr_message_decode(const cr_envelope_view_t *envelope, cr_message_t *
         if (!read_u8(&reader, &message->body.resync_required.reason)) result = CR_ERR_TRUNCATED;
         else if (message->body.resync_required.reason < 1 || message->body.resync_required.reason > 4) result = CR_ERR_INVALID_PAYLOAD;
         break;
+    case CR_MESSAGE_MICRO_CONTROL_LAYOUT:
+        for (size_t index = 0; index < CR_MICRO_CONTROL_LABEL_COUNT && result == CR_OK; index++) {
+            result = read_string(
+                &reader,
+                CR_MAX_MICRO_CONTROL_LABEL_BYTES,
+                &message->body.micro_control_layout.controls[index]
+            );
+        }
+        if (result == CR_OK) {
+            result = read_string(
+                &reader,
+                CR_MAX_MICRO_CONTROL_LABEL_BYTES,
+                &message->body.micro_control_layout.encoder
+            );
+        }
+        for (size_t index = 0; index < CR_MICRO_DIRECTION_LABEL_COUNT && result == CR_OK; index++) {
+            result = read_string(
+                &reader,
+                CR_MAX_MICRO_CONTROL_LABEL_BYTES,
+                &message->body.micro_control_layout.directions[index]
+            );
+        }
+        break;
     default:
         result = CR_ERR_UNSUPPORTED_MESSAGE;
         break;
@@ -481,6 +504,30 @@ static cr_result_t encode_body(const cr_message_t *message, writer_t *writer)
     case CR_MESSAGE_RESYNC_REQUIRED:
         if (message->body.resync_required.reason < 1 || message->body.resync_required.reason > 4) return CR_ERR_INVALID_PAYLOAD;
         write_u8(writer, message->body.resync_required.reason);
+        break;
+    case CR_MESSAGE_MICRO_CONTROL_LAYOUT:
+        for (size_t index = 0; index < CR_MICRO_CONTROL_LABEL_COUNT; index++) {
+            result = write_string(
+                writer,
+                message->body.micro_control_layout.controls[index],
+                CR_MAX_MICRO_CONTROL_LABEL_BYTES
+            );
+            if (result != CR_OK) return result;
+        }
+        result = write_string(
+            writer,
+            message->body.micro_control_layout.encoder,
+            CR_MAX_MICRO_CONTROL_LABEL_BYTES
+        );
+        if (result != CR_OK) return result;
+        for (size_t index = 0; index < CR_MICRO_DIRECTION_LABEL_COUNT; index++) {
+            result = write_string(
+                writer,
+                message->body.micro_control_layout.directions[index],
+                CR_MAX_MICRO_CONTROL_LABEL_BYTES
+            );
+            if (result != CR_OK) return result;
+        }
         break;
     default:
         return CR_ERR_UNSUPPORTED_MESSAGE;

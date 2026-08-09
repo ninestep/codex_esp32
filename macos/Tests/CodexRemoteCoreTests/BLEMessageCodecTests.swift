@@ -5,8 +5,8 @@ import XCTest
 final class BLEMessageCodecTests: XCTestCase {
     private let codec = BLEMessageCodec()
 
-    func testProtocolV12DefinesNavigationShortcutAndEditingContract() {
-        XCTAssertEqual(BLEProtocolVersion.current, BLEProtocolVersion(major: 1, minor: 2))
+    func testProtocolV13DefinesControlLayoutAndEditingContract() {
+        XCTAssertEqual(BLEProtocolVersion.current, BLEProtocolVersion(major: 1, minor: 3))
         XCTAssertEqual(RemoteTerminalKey.up.rawValue, 3)
         XCTAssertEqual(RemoteTerminalKey.down.rawValue, 4)
         XCTAssertEqual(RemoteTerminalKey.left.rawValue, 5)
@@ -54,11 +54,33 @@ final class BLEMessageCodecTests: XCTestCase {
             .assetAcknowledgement(setID: 12, assetID: 1, nextOffset: 3, result: .accepted),
             .deviceInfo(DeviceInformation(firmwareVersion: "sim-1", capabilities: [.display, .microphone], batteryPercent: 82)),
             .resyncRequired(reason: .sequenceGap),
+            .microControlLayout(MicroControlLayout(
+                controls: ["快速模式", "批准", "拒绝", "继续", "按住说话", "发送"],
+                encoder: "会话滚动",
+                directions: ["计划模式", "前进", "显示或隐藏侧栏", "后退"]
+            )),
         ]
 
         for (index, message) in messages.enumerated() {
             let encoded = try codec.encode(message, sequence: UInt32(index + 1))
             XCTAssertEqual(try codec.decode(encoded), BLEDecodedMessage(sequence: UInt32(index + 1), message: message))
+        }
+    }
+
+    func testControlLayoutRequiresSixControlsAndFourDirections() {
+        XCTAssertThrowsError(try codec.encode(.microControlLayout(MicroControlLayout(
+            controls: ["批准"],
+            encoder: "会话滚动",
+            directions: ["上", "右", "下", "左"]
+        )), sequence: 1)) { error in
+            XCTAssertEqual(error as? BLEMessageCodecError, .invalidMicroControlCount(1))
+        }
+        XCTAssertThrowsError(try codec.encode(.microControlLayout(MicroControlLayout(
+            controls: ["1", "2", "3", "4", "5", "6"],
+            encoder: "会话滚动",
+            directions: ["上"]
+        )), sequence: 1)) { error in
+            XCTAssertEqual(error as? BLEMessageCodecError, .invalidMicroDirectionCount(1))
         }
     }
 

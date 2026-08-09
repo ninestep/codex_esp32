@@ -117,6 +117,7 @@ static void test_all_valid_message_fixtures(void)
         {"macos/Fixtures/ble-v1/asset-manifest.hex", CR_MESSAGE_ASSET_MANIFEST, 1},
         {"macos/Fixtures/ble-v1/asset-chunk.hex", CR_MESSAGE_ASSET_CHUNK, 0},
         {"macos/Fixtures/ble-v1/device-info.hex", CR_MESSAGE_DEVICE_INFO, 0},
+        {"macos/Fixtures/ble-v1/micro-control-layout.hex", CR_MESSAGE_MICRO_CONTROL_LAYOUT, 0},
     };
     size_t count = sizeof(fixtures) / sizeof(fixtures[0]);
     for (size_t index = 0; index < count; index++) {
@@ -151,7 +152,7 @@ static void test_two_fragment_fixture_reassembles(void)
     cr_envelope_view_t envelope = {0};
     assert(cr_envelope_decode(complete.bytes, complete.length, &envelope) == CR_OK);
     assert(envelope.type == CR_MESSAGE_SELECT_SESSION);
-    assert(envelope.sequence == 16);
+    assert(envelope.sequence == 17);
     free(first);
     free(second);
 }
@@ -187,6 +188,23 @@ static void test_non_fixture_message_types_round_trip(void)
         {.type = CR_MESSAGE_PTT_END, .body.ptt_end = {.request_id = 9, .session_key = 2, .last_audio_sequence = 19}},
         {.type = CR_MESSAGE_ASSET_ACKNOWLEDGEMENT, .body.asset_acknowledgement = {.set_id = 4, .asset_id = 3, .next_offset = 128, .result = 1}},
         {.type = CR_MESSAGE_RESYNC_REQUIRED, .body.resync_required = {.reason = 2}},
+        {.type = CR_MESSAGE_MICRO_CONTROL_LAYOUT, .body.micro_control_layout = {
+            .controls = {
+                {.bytes = (const uint8_t *)"fast", .length = 4},
+                {.bytes = (const uint8_t *)"approve", .length = 7},
+                {.bytes = (const uint8_t *)"decline", .length = 7},
+                {.bytes = (const uint8_t *)"continue", .length = 8},
+                {.bytes = (const uint8_t *)"ptt", .length = 3},
+                {.bytes = (const uint8_t *)"send", .length = 4},
+            },
+            .encoder = {.bytes = (const uint8_t *)"scroll", .length = 6},
+            .directions = {
+                {.bytes = (const uint8_t *)"plan", .length = 4},
+                {.bytes = (const uint8_t *)"forward", .length = 7},
+                {.bytes = (const uint8_t *)"sidebar", .length = 7},
+                {.bytes = (const uint8_t *)"back", .length = 4},
+            },
+        }},
     };
     for (size_t index = 0; index < sizeof(messages) / sizeof(messages[0]); index++) {
         assert_constructed_message_round_trip(&messages[index]);
@@ -231,7 +249,7 @@ static void test_malformed_payloads_are_rejected(void)
 
 int main(void)
 {
-    assert(CR_PROTOCOL_MINOR == 2);
+    assert(CR_PROTOCOL_MINOR == 3);
     assert(CR_TERMINAL_KEY_BACKSPACE == 7);
     assert(CR_TERMINAL_KEY_CLEAR_LINE == 8);
     test_all_valid_message_fixtures();

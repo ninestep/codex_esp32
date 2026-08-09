@@ -5,6 +5,21 @@ import XCTest
 
 @MainActor
 final class CompanionAudioCoordinatorTests: XCTestCase {
+    func testDeviceInfoSendsCurrentControlLayout() async throws {
+        let transport = CompanionBluetoothTransportSpy()
+        let coordinator = CompanionAudioCoordinator(
+            transport: transport,
+            audioInput: CompanionAudioInputSpy(),
+            layoutReader: CompanionLayoutReaderStub(layout: .defaults)
+        )
+
+        try await coordinator.receive(message: .deviceInfo(deviceInfo()))
+
+        XCTAssertEqual(try transport.decodedMessages(), [
+            .microControlLayout(CodexMicroLayoutSettings.defaults.companionLayout),
+        ])
+    }
+
     func testPTTDoesNotRequireCodexSessionAndForwardsAudio() async throws {
         let transport = CompanionBluetoothTransportSpy()
         let audio = CompanionAudioInputSpy()
@@ -189,5 +204,13 @@ private final class CompanionBluetoothTransportSpy: BluetoothTransport {
             guard case .complete(let data) = result else { return nil }
             return try codec.decode(data).message
         }
+    }
+}
+
+private struct CompanionLayoutReaderStub: CodexMicroLayoutReading {
+    let layout: CodexMicroLayoutSettings
+
+    func read() throws -> CodexMicroLayoutSettings {
+        layout
     }
 }

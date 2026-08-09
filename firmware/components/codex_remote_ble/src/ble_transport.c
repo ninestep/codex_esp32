@@ -270,6 +270,13 @@ static void handle_complete_message(cr_byte_view_t complete)
         if (result == CR_DEVICE_APPLIED) publish_state();
         return;
     }
+    if (message.type == CR_MESSAGE_MICRO_CONTROL_LAYOUT) {
+        if (callbacks.on_micro_layout_changed != NULL) {
+            callbacks.on_micro_layout_changed(&message, callbacks.callback_context);
+        }
+        ESP_LOGI(TAG, "Codex Micro control layout received");
+        return;
+    }
     if (message.type == CR_MESSAGE_ACTION_RESULT
         && message.body.action_result.request_id == pending_select_request) {
         if (message.body.action_result.result == 0) {

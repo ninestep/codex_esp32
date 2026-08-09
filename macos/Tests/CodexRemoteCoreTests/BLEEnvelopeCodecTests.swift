@@ -7,7 +7,7 @@ final class BLEEnvelopeCodecTests: XCTestCase {
     func testEncodesExactEmptyPayloadVector() throws {
         let data = try codec.encode(BLEEnvelope(type: .selectSession, sequence: 0, payload: Data()))
 
-        XCTAssertEqual(data.hexString, "435201020100000000000000000047b7bea9")
+        XCTAssertEqual(data.hexString, "435201030100000000000000000087683068")
     }
 
     func testRoundTripsBinaryPayload() throws {

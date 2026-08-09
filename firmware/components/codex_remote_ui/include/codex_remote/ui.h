@@ -9,6 +9,14 @@
 
 #include <stdint.h>
 
+#define CR_MICRO_UI_LABEL_BYTES ((size_t)(CR_MAX_MICRO_CONTROL_LABEL_BYTES + 1))
+
+typedef struct {
+    char controls[CR_MICRO_CONTROL_LABEL_COUNT][CR_MICRO_UI_LABEL_BYTES];
+    char encoder[CR_MICRO_UI_LABEL_BYTES];
+    char directions[CR_MICRO_DIRECTION_LABEL_COUNT][CR_MICRO_UI_LABEL_BYTES];
+} cr_micro_control_layout_t;
+
 typedef struct {
     void (*select_session)(uint16_t session_key, void *context);
     void (*scroll)(uint16_t session_key, int16_t delta, void *context);
@@ -30,6 +38,7 @@ typedef struct {
 void cr_ui_init(const cr_ui_callbacks_t *callbacks);
 void cr_ui_update(const cr_device_state_t *state);
 void cr_ui_update_micro(const cr_micro_state_t *state);
+void cr_ui_update_micro_layout(const cr_micro_control_layout_t *layout);
 void cr_ui_set_connection_mode(const cr_connection_mode_state_t *state);
 void cr_ui_set_power(cr_power_mode_t mode, size_t asset_index);
 bool cr_ui_is_detail_active(void);

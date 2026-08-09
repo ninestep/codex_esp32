@@ -1,3 +1,4 @@
+import CodexRemoteCore
 import Foundation
 import XCTest
 @testable import CodexRemoteMac
@@ -8,6 +9,7 @@ final class CodexMicroLayoutSettingsTests: XCTestCase {
         [desktop.codex-micro-layout]
         version = 1
         separateMicrophoneKeys = false
+        encoderMode = "conversation-scroll"
 
         [desktop.codex-micro-layout.slots.ACT06]
         keycapId = "FAST"
@@ -26,6 +28,22 @@ final class CodexMicroLayoutSettingsTests: XCTestCase {
 
         [desktop.codex-micro-layout.slots.ACT12]
         keycapId = "CODEX"
+
+        [desktop.codex-micro-layout.analogStick.up]
+        type = "command"
+        commandId = "composer.togglePlanMode"
+
+        [desktop.codex-micro-layout.analogStick.right]
+        type = "command"
+        commandId = "navigateForward"
+
+        [desktop.codex-micro-layout.analogStick.down]
+        type = "command"
+        commandId = "toggleSidebar"
+
+        [desktop.codex-micro-layout.analogStick.left]
+        type = "command"
+        commandId = "navigateBack"
         """
 
         let layout = try CodexMicroLayoutParser().parse(source)
@@ -41,6 +59,11 @@ final class CodexMicroLayoutSettingsTests: XCTestCase {
             .pushToTalk,
             .command(id: "composer.submit"),
         ])
+        XCTAssertEqual(layout.companionLayout, MicroControlLayout(
+            controls: ["快速模式", "批准", "拒绝", "在新会话中继续", "按住说话", "发送"],
+            encoder: "会话滚动",
+            directions: ["计划模式", "前进", "显示或隐藏侧栏", "后退"]
+        ))
     }
 
     func testExplicitCommandAndSkillOverrideKeycapDefaults() throws {
@@ -69,6 +92,8 @@ final class CodexMicroLayoutSettingsTests: XCTestCase {
         XCTAssertEqual(layout.activeCommandSlots.map(\.slot), [
             .act06, .act07, .act08, .act09, .act10, .act11, .act12,
         ])
+        XCTAssertEqual(layout.companionLayout.controls.count, 6)
+        XCTAssertEqual(layout.companionLayout.controls[4], "按住说话")
     }
 
     func testMissingLayoutUsesEffectiveDefaults() throws {

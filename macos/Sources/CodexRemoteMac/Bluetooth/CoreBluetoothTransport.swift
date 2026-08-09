@@ -1,9 +1,12 @@
 @preconcurrency import CoreBluetooth
 import CodexRemoteCore
 import Foundation
+import OSLog
 
 @MainActor
 public final class CoreBluetoothTransport: NSObject, BluetoothTransport {
+    private static let logger = Logger(subsystem: "net.codexremote.mac", category: "BluetoothTransport")
+
     public var onStateChange: ((BluetoothTransportState) -> Void)?
     public var onPacket: ((BLETransportPacket) -> Void)?
 
@@ -26,6 +29,7 @@ public final class CoreBluetoothTransport: NSObject, BluetoothTransport {
     }
 
     public func start() {
+        Self.logger.info("Bluetooth transport start centralState=\(self.central.state.rawValue)")
         execute(stateMachine.handle(.centralChanged(map(central.state))))
     }
 
@@ -116,7 +120,11 @@ public final class CoreBluetoothTransport: NSObject, BluetoothTransport {
         )
         let target = connectedCompanions.first
             ?? connectedHIDDevices.first(where: { $0.name == BluetoothUUIDs.hidDeviceName })
+        Self.logger.info(
+            "Bluetooth lookup companionCount=\(connectedCompanions.count) hidCount=\(connectedHIDDevices.count) hidNames=\(connectedHIDDevices.compactMap(\.name).joined(separator: ","), privacy: .public)"
+        )
         if let target {
+            Self.logger.info("Bluetooth connecting retrieved device name=\(target.name ?? "<unknown>", privacy: .public) id=\(target.identifier.uuidString, privacy: .public)")
             let id = target.identifier.uuidString
             discoveredPeripherals[id] = target
             execute(stateMachine.handle(.discoveredDevice(id: id)))
@@ -168,25 +176,30 @@ public final class CoreBluetoothTransport: NSObject, BluetoothTransport {
 
 extension CoreBluetoothTransport: @preconcurrency CBCentralManagerDelegate {
     public func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        Self.logger.info("Bluetooth central state changed rawValue=\(central.state.rawValue)")
         execute(stateMachine.handle(.centralChanged(map(central.state))))
     }
 
     public func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral, advertisementData: [String: Any], rssi RSSI: NSNumber) {
+        Self.logger.info("Bluetooth discovered device name=\(peripheral.name ?? "<unknown>", privacy: .public) id=\(peripheral.identifier.uuidString, privacy: .public)")
         let id = peripheral.identifier.uuidString
         discoveredPeripherals[id] = peripheral
         execute(stateMachine.handle(.discoveredDevice(id: id)))
     }
 
     public func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
+        Self.logger.info("Bluetooth connected device name=\(peripheral.name ?? "<unknown>", privacy: .public) id=\(peripheral.identifier.uuidString, privacy: .public)")
         peripheral.delegate = self
         execute(stateMachine.handle(.connected(id: peripheral.identifier.uuidString)))
     }
 
     public func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
+        Self.logger.error("Bluetooth connect failed error=\(String(describing: error), privacy: .public)")
         execute(stateMachine.handle(.disconnected(id: peripheral.identifier.uuidString)))
     }
 
     public func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
+        Self.logger.error("Bluetooth disconnected error=\(String(describing: error), privacy: .public)")
         characteristics.removeAll()
         pendingSubscriptionResets.removeAll()
         self.peripheral = nil
@@ -196,11 +209,13 @@ extension CoreBluetoothTransport: @preconcurrency CBCentralManagerDelegate {
 
 extension CoreBluetoothTransport: @preconcurrency CBPeripheralDelegate {
     public func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
+        Self.logger.info("Bluetooth services discovered count=\(peripheral.services?.count ?? 0) error=\(String(describing: error), privacy: .public)")
         guard error == nil, peripheral.services?.contains(where: { $0.uuid == BluetoothUUIDs.service }) == true else { return }
         execute(stateMachine.handle(.serviceDiscovered))
     }
 
     public func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
+        Self.logger.info("Bluetooth characteristics discovered count=\(service.characteristics?.count ?? 0) error=\(String(describing: error), privacy: .public)")
         guard error == nil else { return }
         for characteristic in service.characteristics ?? [] {
             if let role = role(for: characteristic.uuid) {

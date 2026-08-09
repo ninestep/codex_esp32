@@ -15,6 +15,7 @@ public final class DoubaoLoginController: NSObject {
     public private(set) var state: DoubaoLoginState {
         didSet { onStateChange?(state) }
     }
+    public private(set) var credentials: DoubaoASRCredentials?
 
     private let credentialsStore: DoubaoCredentialsStore
     private var webView: WKWebView?
@@ -23,8 +24,18 @@ public final class DoubaoLoginController: NSObject {
 
     public init(credentialsStore: DoubaoCredentialsStore = DoubaoCredentialsStore()) {
         self.credentialsStore = credentialsStore
-        self.state = credentialsStore.load() == nil ? .loggedOut : .ready
+        self.state = .loggedOut
         super.init()
+    }
+
+    public func restoreCredentials() async {
+        let credentialsStore = self.credentialsStore
+        let restored = await Task.detached(priority: .utility) {
+            credentialsStore.load()
+        }.value
+        guard state == .loggedOut else { return }
+        credentials = restored
+        state = restored == nil ? .loggedOut : .ready
     }
 
     public func showLoginWindow() {
@@ -96,6 +107,7 @@ public final class DoubaoLoginController: NSObject {
     public func logout() {
         do {
             try credentialsStore.clear()
+            credentials = nil
             state = .loggedOut
         } catch {
             state = .failed("清除豆包登录凭证失败")
@@ -143,6 +155,7 @@ public final class DoubaoLoginController: NSObject {
 
         do {
             try credentialsStore.save(credentials)
+            self.credentials = credentials
             statusLabel?.stringValue = "登录凭证已安全保存。"
             state = .ready
             window?.orderOut(nil)

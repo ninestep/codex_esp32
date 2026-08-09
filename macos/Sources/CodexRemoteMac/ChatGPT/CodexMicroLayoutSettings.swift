@@ -1,3 +1,4 @@
+import CodexRemoteCore
 import Foundation
 
 public enum CodexMicroControlSlot: String, CaseIterable, Equatable, Sendable {
@@ -55,19 +56,32 @@ public struct CodexMicroSlotMapping: Equatable, Sendable {
     }
 }
 
+public enum CodexMicroDirection: String, CaseIterable, Equatable, Sendable {
+    case up
+    case right
+    case down
+    case left
+}
+
 public struct CodexMicroLayoutSettings: Equatable, Sendable {
     public let version: Int
     public let separateMicrophoneKeys: Bool
     public let slots: [CodexMicroControlSlot: CodexMicroSlotMapping]
+    public let encoderMode: String
+    public let analogStick: [CodexMicroDirection: CodexMicroResolvedAction]
 
     public init(
         version: Int,
         separateMicrophoneKeys: Bool,
-        slots: [CodexMicroControlSlot: CodexMicroSlotMapping]
+        slots: [CodexMicroControlSlot: CodexMicroSlotMapping],
+        encoderMode: String,
+        analogStick: [CodexMicroDirection: CodexMicroResolvedAction]
     ) {
         self.version = version
         self.separateMicrophoneKeys = separateMicrophoneKeys
         self.slots = slots
+        self.encoderMode = encoderMode
+        self.analogStick = analogStick
     }
 
     public var activeCommandSlots: [CodexMicroSlotMapping] {
@@ -77,10 +91,44 @@ public struct CodexMicroLayoutSettings: Equatable, Sendable {
         return slotOrder.compactMap { slots[$0] }
     }
 
+    public var companionLayout: MicroControlLayout {
+        let slotOrder: [CodexMicroControlSlot] = separateMicrophoneKeys
+            ? [.act06, .act07, .act08, .act09, .act10, .act12]
+            : [.act06, .act07, .act08, .act09, .act10Act11, .act12]
+        let controls = slotOrder.map {
+            Self.boundedLabel(slots[$0]?.action.displayName ?? "未分配")
+        }
+        let encoder = switch encoderMode {
+        case "conversation-scroll": "会话滚动"
+        case "disabled": "未分配"
+        default: encoderMode.isEmpty ? "未分配" : encoderMode
+        }
+        let directions = CodexMicroDirection.allCases.map {
+            Self.boundedLabel(analogStick[$0]?.displayName ?? "未分配")
+        }
+        return MicroControlLayout(
+            controls: controls,
+            encoder: Self.boundedLabel(encoder),
+            directions: directions
+        )
+    }
+
+    private static func boundedLabel(_ value: String) -> String {
+        var result = ""
+        for character in value {
+            let candidate = result + String(character)
+            if candidate.utf8.count > 48 { break }
+            result = candidate
+        }
+        return result
+    }
+
     public static let defaults = CodexMicroLayoutSettings(
         version: 1,
         separateMicrophoneKeys: false,
-        slots: CodexMicroLayoutParser.defaultSlots
+        slots: CodexMicroLayoutParser.defaultSlots,
+        encoderMode: "conversation-scroll",
+        analogStick: CodexMicroLayoutParser.defaultAnalogStick
     )
 }
 
@@ -134,6 +182,13 @@ struct CodexMicroLayoutParser: Sendable {
         })
     }()
 
+    static let defaultAnalogStick: [CodexMicroDirection: CodexMicroResolvedAction] = [
+        .up: .command(id: "composer.togglePlanMode"),
+        .right: .command(id: "navigateForward"),
+        .down: .command(id: "toggleSidebar"),
+        .left: .command(id: "navigateBack"),
+    ]
+
     private static let layoutTable = "desktop.codex-micro-layout"
 
     func parse(_ source: String) throws -> CodexMicroLayoutSettings {
@@ -171,6 +226,8 @@ struct CodexMicroLayoutParser: Sendable {
             values["\(Self.layoutTable).separateMicrophoneKeys"],
             default: false
         )
+        let encoderMode = try string(values["\(Self.layoutTable).encoderMode"])
+            ?? "conversation-scroll"
         var slots = Self.defaultSlots
         for slot in CodexMicroControlSlot.allCases {
             let prefix = "\(Self.layoutTable).slots.\(slot.rawValue)"
@@ -190,10 +247,32 @@ struct CodexMicroLayoutParser: Sendable {
             )
             slots[slot] = CodexMicroSlotMapping(slot: slot, keycapID: keycap, action: action)
         }
+        var analogStick = Self.defaultAnalogStick
+        for direction in CodexMicroDirection.allCases {
+            let prefix = "\(Self.layoutTable).analogStick.\(direction.rawValue)"
+            let actionType = try string(values["\(prefix).type"])
+                ?? string(values["\(prefix).action.type"])
+            let commandID = try string(values["\(prefix).commandId"])
+                ?? string(values["\(prefix).action.commandId"])
+            let skillID = try string(values["\(prefix).skillId"])
+                ?? string(values["\(prefix).skillPath"])
+                ?? string(values["\(prefix).action.skillId"])
+                ?? string(values["\(prefix).action.skillPath"])
+            if actionType != nil || commandID != nil || skillID != nil {
+                analogStick[direction] = resolveAction(
+                    actionType: actionType,
+                    commandID: commandID,
+                    skillID: skillID,
+                    keycapID: ""
+                )
+            }
+        }
         return CodexMicroLayoutSettings(
             version: version,
             separateMicrophoneKeys: separate,
-            slots: slots
+            slots: slots,
+            encoderMode: encoderMode,
+            analogStick: analogStick
         )
     }
 

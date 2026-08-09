@@ -19,18 +19,18 @@ struct DoubaoRecognitionResultState {
 
 @MainActor
 public final class DoubaoSpeechRecognitionSessionFactory: SpeechRecognitionSessionFactory {
-    private let credentialsStore: DoubaoCredentialsStore
+    private let credentials: DoubaoASRCredentials?
 
-    public init(credentialsStore: DoubaoCredentialsStore = DoubaoCredentialsStore()) {
-        self.credentialsStore = credentialsStore
+    public init(credentials: DoubaoASRCredentials? = nil) {
+        self.credentials = credentials?.isValid == true ? credentials : nil
     }
 
     public var dependencyStatus: AudioDependencyStatus {
-        credentialsStore.load() == nil ? .speechRecognitionUnavailable : .ready
+        credentials == nil ? .speechRecognitionUnavailable : .ready
     }
 
     public func makeSession() throws -> any SpeechRecognitionSession {
-        guard let credentials = credentialsStore.load() else {
+        guard let credentials else {
             throw AudioInputBridgeError.dependencyMissing
         }
         return try DoubaoSpeechRecognitionSession(credentials: credentials)

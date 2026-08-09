@@ -270,7 +270,8 @@ public final class MacClientCoordinator {
             try send(syncReducer.resync())
 
         case .actionResult, .stateSnapshot, .stateDelta,
-             .assetManifest, .assetChunk, .assetAcknowledgement:
+             .assetManifest, .assetChunk, .assetAcknowledgement,
+             .microControlLayout:
             break
         }
     }

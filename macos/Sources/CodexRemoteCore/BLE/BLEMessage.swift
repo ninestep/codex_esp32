@@ -211,6 +211,21 @@ public struct DeviceInformation: Equatable, Sendable {
     }
 }
 
+public struct MicroControlLayout: Equatable, Sendable {
+    public static let controlCount = 6
+    public static let directionCount = 4
+
+    public let controls: [String]
+    public let encoder: String
+    public let directions: [String]
+
+    public init(controls: [String], encoder: String, directions: [String]) {
+        self.controls = controls
+        self.encoder = encoder
+        self.directions = directions
+    }
+}
+
 public enum ResyncReason: UInt8, Equatable, Sendable {
     case connectionReset = 1
     case sequenceGap = 2
@@ -234,6 +249,7 @@ public enum BLEMessage: Equatable, Sendable {
     case deviceInfo(DeviceInformation)
     case resyncRequired(reason: ResyncReason)
     case terminalShortcut(requestID: UInt32, sessionKey: UInt16, shortcut: RemoteTerminalShortcut)
+    case microControlLayout(MicroControlLayout)
 }
 
 public struct BLEDecodedMessage: Equatable, Sendable {
@@ -257,4 +273,6 @@ public enum BLEMessageCodecError: Error, Equatable, Sendable {
     case invalidBatteryPercent(UInt8)
     case invalidAssetManifest
     case chunkTooLarge(Int)
+    case invalidMicroControlCount(Int)
+    case invalidMicroDirectionCount(Int)
 }

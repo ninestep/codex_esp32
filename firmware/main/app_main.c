@@ -53,6 +53,10 @@ static QueueHandle_t micro_state_queue;
 static StaticQueue_t micro_state_queue_storage;
 static uint8_t micro_state_queue_buffer[sizeof(cr_micro_state_t)];
 static cr_micro_state_t micro_state_snapshot;
+static QueueHandle_t micro_layout_queue;
+static StaticQueue_t micro_layout_queue_storage;
+static uint8_t micro_layout_queue_buffer[sizeof(cr_micro_control_layout_t)];
+static cr_micro_control_layout_t micro_layout_snapshot;
 static cr_micro_agent_status_t previous_micro_statuses[CR_MICRO_SLOT_COUNT];
 static bool micro_status_baseline_ready;
 static uint64_t micro_notifications_arm_at_ms;
@@ -229,6 +233,55 @@ static void ble_state_changed(const cr_device_state_t *state, void *context)
 {
     (void)context;
     xQueueOverwrite(ui_state_queue, state);
+}
+
+static void copy_micro_layout_label(
+    char destination[CR_MICRO_UI_LABEL_BYTES],
+    cr_byte_view_t source
+)
+{
+    size_t length = source.length < CR_MICRO_UI_LABEL_BYTES - 1
+        ? source.length : CR_MICRO_UI_LABEL_BYTES - 1;
+    if (length > 0) memcpy(destination, source.bytes, length);
+    destination[length] = '\0';
+}
+
+static void ble_micro_layout_changed(const cr_message_t *message, void *context)
+{
+    (void)context;
+    if (message == NULL || message->type != CR_MESSAGE_MICRO_CONTROL_LAYOUT) return;
+    cr_micro_control_layout_t layout = {0};
+    for (size_t index = 0; index < CR_MICRO_CONTROL_LABEL_COUNT; index++) {
+        copy_micro_layout_label(
+            layout.controls[index],
+            message->body.micro_control_layout.controls[index]
+        );
+    }
+    copy_micro_layout_label(layout.encoder, message->body.micro_control_layout.encoder);
+    for (size_t index = 0; index < CR_MICRO_DIRECTION_LABEL_COUNT; index++) {
+        copy_micro_layout_label(
+            layout.directions[index],
+            message->body.micro_control_layout.directions[index]
+        );
+    }
+    xQueueOverwrite(micro_layout_queue, &layout);
+}
+
+static void micro_layout_task(void *context)
+{
+    (void)context;
+    while (true) {
+        if (xQueueReceive(
+                micro_layout_queue, &micro_layout_snapshot, portMAX_DELAY
+            ) != pdTRUE) continue;
+        if (esp_lv_adapter_lock(200) != ESP_OK) {
+            ESP_LOGW(TAG, "display busy while applying Codex Micro layout");
+            continue;
+        }
+        cr_ui_update_micro_layout(&micro_layout_snapshot);
+        esp_lv_adapter_unlock();
+        ESP_LOGI(TAG, "Codex Micro control layout displayed");
+    }
 }
 
 static void ui_state_task(void *context)
@@ -611,6 +664,13 @@ void app_main(void)
         &micro_state_queue_storage
     );
     configASSERT(micro_state_queue != NULL);
+    micro_layout_queue = xQueueCreateStatic(
+        1,
+        sizeof(cr_micro_control_layout_t),
+        micro_layout_queue_buffer,
+        &micro_layout_queue_storage
+    );
+    configASSERT(micro_layout_queue != NULL);
     if (cr_display_start() == NULL) {
         ESP_LOGE(TAG, "failed to initialize Waveshare display");
         return;
@@ -645,6 +705,7 @@ void app_main(void)
     if (connection_mode_state.active == CR_CONNECTION_MODE_MAC_COMPANION) {
         cr_ble_config_t ble_config = {
             .on_state_changed = ble_state_changed,
+            .on_micro_layout_changed = ble_micro_layout_changed,
         };
         ESP_ERROR_CHECK(cr_ble_start(&device_state, &ble_config));
         companion_transport_started = true;
@@ -662,6 +723,7 @@ void app_main(void)
     } else if (connection_mode_state.active == CR_CONNECTION_MODE_NATIVE_MICRO) {
         cr_ble_config_t ble_config = {
             .on_state_changed = ble_state_changed,
+            .on_micro_layout_changed = ble_micro_layout_changed,
         };
         ESP_ERROR_CHECK(cr_ble_prepare_hid_companion(&device_state, &ble_config));
         companion_transport_started = true;
@@ -674,6 +736,10 @@ void app_main(void)
 
         ESP_ERROR_CHECK(
             xTaskCreate(micro_state_task, "micro_ui", 4096, NULL, 5, NULL) == pdPASS
+                ? ESP_OK : ESP_ERR_NO_MEM
+        );
+        ESP_ERROR_CHECK(
+            xTaskCreate(micro_layout_task, "micro_layout", 4096, NULL, 5, NULL) == pdPASS
                 ? ESP_OK : ESP_ERR_NO_MEM
         );
         cr_codex_micro_hid_config_t hid_config = {

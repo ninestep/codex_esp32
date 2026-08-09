@@ -120,6 +120,21 @@ public struct BLEMessageCodec: Sendable {
         case let .resyncRequired(reason):
             type = .resyncRequired
             encoder.append(reason.rawValue)
+        case let .microControlLayout(layout):
+            guard layout.controls.count == MicroControlLayout.controlCount else {
+                throw BLEMessageCodecError.invalidMicroControlCount(layout.controls.count)
+            }
+            guard layout.directions.count == MicroControlLayout.directionCount else {
+                throw BLEMessageCodecError.invalidMicroDirectionCount(layout.directions.count)
+            }
+            type = .microControlLayout
+            for label in layout.controls {
+                try encoder.appendString(label, maxBytes: 48)
+            }
+            try encoder.appendString(layout.encoder, maxBytes: 48)
+            for label in layout.directions {
+                try encoder.appendString(label, maxBytes: 48)
+            }
         }
 
         return (type, encoder.data)
@@ -247,6 +262,23 @@ public struct BLEMessageCodec: Sendable {
                 throw BLEMessageCodecError.unknownEnum(field: "resyncReason", rawValue: raw)
             }
             return .resyncRequired(reason: reason)
+        case .microControlLayout:
+            var controls: [String] = []
+            controls.reserveCapacity(MicroControlLayout.controlCount)
+            for _ in 0..<MicroControlLayout.controlCount {
+                controls.append(try decoder.readString(maxBytes: 48))
+            }
+            let encoder = try decoder.readString(maxBytes: 48)
+            var directions: [String] = []
+            directions.reserveCapacity(MicroControlLayout.directionCount)
+            for _ in 0..<MicroControlLayout.directionCount {
+                directions.append(try decoder.readString(maxBytes: 48))
+            }
+            return .microControlLayout(MicroControlLayout(
+                controls: controls,
+                encoder: encoder,
+                directions: directions
+            ))
         }
     }
 

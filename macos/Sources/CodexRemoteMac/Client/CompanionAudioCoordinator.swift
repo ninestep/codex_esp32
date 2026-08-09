@@ -56,6 +56,7 @@ public final class CompanionAudioCoordinator {
 
     private let transport: any BluetoothTransport
     private let audioInput: any AudioInputHandling
+    private let layoutReader: any CodexMicroLayoutReading
     private let messageCodec = BLEMessageCodec()
     private let fragmentCodec = BLEFragmentCodec()
     private var reassemblers: [BLELogicalChannel: BLEFragmentReassembler] = [:]
@@ -67,10 +68,12 @@ public final class CompanionAudioCoordinator {
 
     public init(
         transport: any BluetoothTransport = CoreBluetoothTransport(),
-        audioInput: any AudioInputHandling
+        audioInput: any AudioInputHandling,
+        layoutReader: any CodexMicroLayoutReading = CodexMicroLayoutReader()
     ) {
         self.transport = transport
         self.audioInput = audioInput
+        self.layoutReader = layoutReader
         transport.onStateChange = { [weak self] state in
             self?.handleTransportState(state)
         }
@@ -120,6 +123,13 @@ public final class CompanionAudioCoordinator {
         case .deviceInfo(let information):
             deviceInformation = information
             publishSnapshot()
+            do {
+                let layout = try layoutReader.read()
+                try send(.microControlLayout(layout.companionLayout))
+                Self.logger.info("Codex Micro control layout sent to device")
+            } catch {
+                Self.logger.error("Codex Micro control layout unavailable error=\(String(describing: error), privacy: .public)")
+            }
 
         case let .pttBegin(requestID, sessionKey, firstAudioSequence):
             try await handleRequest(requestID: requestID) {
@@ -186,7 +196,8 @@ public final class CompanionAudioCoordinator {
 
         case .selectSession, .scroll, .terminalKey, .terminalShortcut,
              .actionResult, .stateSnapshot, .stateDelta,
-             .assetManifest, .assetChunk, .assetAcknowledgement:
+             .assetManifest, .assetChunk, .assetAcknowledgement,
+             .microControlLayout:
             break
         }
     }

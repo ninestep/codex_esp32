@@ -265,7 +265,8 @@ public struct SimulatedRemoteDevice: Sendable {
                 channel: .controlToHost
             )
 
-        case .actionResult, .assetAcknowledgement, .deviceInfo, .resyncRequired:
+        case .actionResult, .assetAcknowledgement, .deviceInfo, .resyncRequired,
+             .microControlLayout:
             return []
         }
     }

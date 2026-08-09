@@ -133,6 +133,9 @@ int main(void)
     assert(strstr(ui_source, "LV_EVENT_LONG_PRESSED_REPEAT") != NULL);
     assert(strstr(ui_source, "点击 / 长按") != NULL);
     assert(strstr(ui_source, "lv_obj_set_size(card->card, 214, 116)") != NULL);
+    assert(strstr(ui_source, "lv_obj_remove_flag(home_list, LV_OBJ_FLAG_SCROLLABLE)") != NULL);
+    assert(strstr(ui_source, "lv_obj_scroll_to_y(home_list, 0, LV_ANIM_OFF)") != NULL);
+    assert(strstr(ui_source, "lv_obj_add_flag(home_list, LV_OBJ_FLAG_SCROLLABLE)") != NULL);
     assert(strstr(ui_source, "lv_obj_add_flag(card->directory, LV_OBJ_FLAG_HIDDEN)") != NULL);
     assert(strstr(ui_source, "#%06lX") == NULL);
     assert(strstr(ui_source, "lv_label_set_text(card->status, \"就绪\")") == NULL);

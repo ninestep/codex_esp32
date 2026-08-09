@@ -11,6 +11,9 @@
 #define CR_MAX_ASSETS ((size_t)8)
 #define CR_MAX_TITLE_BYTES ((size_t)64)
 #define CR_MAX_DETAIL_BYTES ((size_t)192)
+#define CR_MICRO_CONTROL_LABEL_COUNT ((size_t)6)
+#define CR_MICRO_DIRECTION_LABEL_COUNT ((size_t)4)
+#define CR_MAX_MICRO_CONTROL_LABEL_BYTES ((size_t)48)
 #define CR_AUDIO_SAMPLE_COUNT UINT16_C(320)
 #define CR_AUDIO_ENCODED_BYTES ((size_t)160)
 
@@ -68,6 +71,11 @@ typedef struct {
         struct { uint32_t set_id; uint16_t asset_id; uint32_t next_offset; uint8_t result; } asset_acknowledgement;
         struct { uint8_t protocol_major; uint8_t protocol_minor; cr_byte_view_t firmware_version; uint16_t capabilities; uint8_t battery_percent; } device_info;
         struct { uint8_t reason; } resync_required;
+        struct {
+            cr_byte_view_t controls[CR_MICRO_CONTROL_LABEL_COUNT];
+            cr_byte_view_t encoder;
+            cr_byte_view_t directions[CR_MICRO_DIRECTION_LABEL_COUNT];
+        } micro_control_layout;
     } body;
 } cr_message_t;
 

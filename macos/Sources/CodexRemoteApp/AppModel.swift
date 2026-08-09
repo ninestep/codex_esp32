@@ -171,6 +171,7 @@ final class AppModel: ObservableObject {
         runtime = AppRuntime(coordinator: coordinator, audioInput: audioInput)
         helperStatus = "增强模式运行中"
         coordinator.start()
+        await doubaoLoginController.restoreCredentials()
     }
 
     func saveSettings() {
@@ -206,7 +207,9 @@ final class AppModel: ObservableObject {
 
     private func makeEnhancedAudioInput() -> any AudioInputHandling {
         SpeechAudioInputBridge(
-            sessionFactory: DoubaoSpeechRecognitionSessionFactory(),
+            sessionFactory: DoubaoSpeechRecognitionSessionFactory(
+                credentials: doubaoLoginController.credentials
+            ),
             textEmitter: CGEventRecognizedTextEmitter(),
             activityHandler: { [weak self] activity in
                 self?.speechAudioActivity = activity

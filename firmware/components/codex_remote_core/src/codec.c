@@ -23,7 +23,7 @@ static void write_u32_le(uint8_t *bytes, uint32_t value)
 
 static int is_known_message_type(uint8_t type)
 {
-    return type >= CR_MESSAGE_SELECT_SESSION && type <= CR_MESSAGE_TERMINAL_SHORTCUT;
+    return type >= CR_MESSAGE_SELECT_SESSION && type <= CR_MESSAGE_MICRO_CONTROL_LAYOUT;
 }
 
 cr_result_t cr_envelope_decode(

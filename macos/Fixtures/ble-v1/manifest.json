@@ -2,7 +2,7 @@
   "byteOrder" : "little",
   "crc" : "CRC32/IEEE",
   "protocolMajor" : 1,
-  "protocolMinor" : 2,
+  "protocolMinor" : 3,
   "vectors" : [
     {
       "file" : "empty-action-result.hex",
@@ -117,12 +117,20 @@
       "sequence" : 13
     },
     {
+      "file" : "micro-control-layout.hex",
+      "kind" : "envelope",
+      "messageType" : "microControlLayout",
+      "name" : "micro-control-layout",
+      "outcome" : "valid",
+      "sequence" : 14
+    },
+    {
       "file" : "bad-crc.hex",
       "kind" : "envelope",
       "messageType" : "selectSession",
       "name" : "bad-crc",
       "outcome" : "crcMismatch",
-      "sequence" : 14
+      "sequence" : 15
     },
     {
       "file" : "incompatible-major.hex",
@@ -130,7 +138,7 @@
       "messageType" : "selectSession",
       "name" : "incompatible-major",
       "outcome" : "incompatibleMajor",
-      "sequence" : 15
+      "sequence" : 16
     },
     {
       "file" : "two-fragment-message.hex",
@@ -138,7 +146,7 @@
       "messageType" : "selectSession",
       "name" : "two-fragment-message",
       "outcome" : "valid",
-      "sequence" : 16
+      "sequence" : 17
     }
   ]
 }

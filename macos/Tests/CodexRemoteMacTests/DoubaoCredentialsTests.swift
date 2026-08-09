@@ -18,4 +18,18 @@ final class DoubaoCredentialsTests: XCTestCase {
         XCTAssertFalse(DoubaoASRCredentials(cookies: ["a": "b"], deviceID: "", webID: "w").isValid)
         XCTAssertFalse(DoubaoASRCredentials(cookies: ["a": "b"], deviceID: "d", webID: "").isValid)
     }
+
+    @MainActor
+    func testSpeechFactoryUsesProvidedCredentialsWithoutReadingKeychain() {
+        let missingFactory = DoubaoSpeechRecognitionSessionFactory()
+        XCTAssertEqual(missingFactory.dependencyStatus, .speechRecognitionUnavailable)
+
+        let credentials = DoubaoASRCredentials(
+            cookies: ["session": "value"],
+            deviceID: "device-id",
+            webID: "web-id"
+        )
+        let readyFactory = DoubaoSpeechRecognitionSessionFactory(credentials: credentials)
+        XCTAssertEqual(readyFactory.dependencyStatus, .ready)
+    }
 }

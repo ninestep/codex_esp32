@@ -171,8 +171,9 @@ final class AppSourceWiringTests: XCTestCase {
         )
 
         XCTAssertTrue(
-            appModelSource.contains("DoubaoSpeechRecognitionSessionFactory()")
+            appModelSource.contains("credentials: doubaoLoginController.credentials")
         )
+        XCTAssertTrue(appModelSource.contains("await doubaoLoginController.restoreCredentials()"))
         XCTAssertTrue(appModelSource.contains("CGEventRecognizedTextEmitter()"))
         XCTAssertTrue(settingsSource.contains("登录豆包"))
         XCTAssertFalse(settingsSource.contains("微信输入法"))

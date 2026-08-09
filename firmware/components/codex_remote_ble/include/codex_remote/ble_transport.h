@@ -10,9 +10,11 @@
 struct ble_gap_event;
 
 typedef void (*cr_ble_state_callback_t)(const cr_device_state_t *state, void *context);
+typedef void (*cr_ble_micro_layout_callback_t)(const cr_message_t *message, void *context);
 
 typedef struct {
     cr_ble_state_callback_t on_state_changed;
+    cr_ble_micro_layout_callback_t on_micro_layout_changed;
     void *callback_context;
 } cr_ble_config_t;
 

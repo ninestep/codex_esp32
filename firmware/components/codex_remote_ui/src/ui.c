@@ -24,6 +24,7 @@ typedef enum {
 
 static cr_ui_callbacks_t actions;
 static lv_obj_t *home_page;
+static lv_obj_t *home_list;
 static lv_obj_t *detail_page;
 static lv_obj_t *detail_content_page;
 static lv_obj_t *shortcut_page;
@@ -32,6 +33,9 @@ static lv_obj_t *mode_page;
 static lv_obj_t *micro_action_page;
 static lv_obj_t *micro_action_title;
 static lv_obj_t *micro_action_status;
+static lv_obj_t *micro_control_labels[CR_MICRO_CONTROL_LABEL_COUNT];
+static lv_obj_t *micro_encoder_entry_label;
+static lv_obj_t *micro_direction_labels[CR_MICRO_DIRECTION_LABEL_COUNT];
 static lv_obj_t *micro_action_menu;
 static lv_obj_t *micro_encoder_panel;
 static lv_obj_t *micro_encoder_ring;
@@ -59,6 +63,11 @@ static int8_t pressed_micro_control = -1;
 static int8_t pressed_micro_direction = -1;
 static bool pressed_micro_encoder;
 static micro_view_t micro_view = MICRO_VIEW_ACTIONS;
+static cr_micro_control_layout_t micro_control_layout = {
+    .controls = {"快速模式", "批准", "拒绝", "继续", "按住说话", "发送"},
+    .encoder = "会话滚动",
+    .directions = {"计划模式", "前进", "显示或隐藏侧栏", "后退"},
+};
 
 static void note_interaction(void)
 {
@@ -327,7 +336,7 @@ static void micro_view_opened(lv_event_t *event)
     lv_obj_add_flag(micro_encoder_panel, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(micro_joystick_panel, LV_OBJ_FLAG_HIDDEN);
     if (micro_view == MICRO_VIEW_ENCODER) {
-        lv_label_set_text(micro_action_title, "旋钮");
+        lv_label_set_text_fmt(micro_action_title, "旋钮 · %s", micro_control_layout.encoder);
         lv_obj_remove_flag(micro_encoder_panel, LV_OBJ_FLAG_HIDDEN);
     } else {
         lv_label_set_text(micro_action_title, "摇杆");
@@ -344,8 +353,12 @@ static lv_obj_t *make_micro_action_button(
 )
 {
     lv_obj_t *button = make_button(micro_action_menu, text);
-    lv_obj_set_size(button, 210, 76);
+    lv_obj_set_size(button, 210, 60);
     lv_obj_set_pos(button, x, y);
+    lv_obj_t *label = lv_obj_get_child(button, 0);
+    lv_obj_set_width(label, 194);
+    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_bg_color(button, lv_color_hex(color), 0);
     lv_obj_add_event_cb(
         button, micro_control_key, LV_EVENT_PRESSED, (void *)(uintptr_t)control
@@ -521,18 +534,18 @@ void cr_ui_init(const cr_ui_callbacks_t *config)
     lv_obj_set_style_text_color(connection_label, lv_color_hex(0xa1a1aa), 0);
     lv_obj_align(connection_label, LV_ALIGN_TOP_RIGHT, -18, 20);
 
-    lv_obj_t *list = lv_obj_create(home_page);
-    lv_obj_set_size(list, 460, 402);
-    lv_obj_align(list, LV_ALIGN_BOTTOM_MID, 0, -8);
-    lv_obj_set_style_bg_opa(list, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(list, 0, 0);
-    lv_obj_set_style_pad_all(list, 4, 0);
-    lv_obj_set_scroll_dir(list, LV_DIR_VER);
-    lv_obj_set_scroll_snap_y(list, LV_SCROLL_SNAP_START);
+    home_list = lv_obj_create(home_page);
+    lv_obj_set_size(home_list, 460, 402);
+    lv_obj_align(home_list, LV_ALIGN_BOTTOM_MID, 0, -8);
+    lv_obj_set_style_bg_opa(home_list, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(home_list, 0, 0);
+    lv_obj_set_style_pad_all(home_list, 4, 0);
+    lv_obj_set_scroll_dir(home_list, LV_DIR_VER);
+    lv_obj_set_scroll_snap_y(home_list, LV_SCROLL_SNAP_START);
 
     for (size_t index = 0; index < CR_MAX_SESSIONS; index++) {
         card_view_t *card = &cards[index];
-        card->card = lv_button_create(list);
+        card->card = lv_button_create(home_list);
         lv_obj_set_size(card->card, 214, 184);
         lv_obj_set_pos(card->card, (index % 2) * 224, (index / 2) * 194);
         lv_obj_set_style_bg_color(card->card, state_background_color(5), 0);
@@ -666,6 +679,8 @@ void cr_ui_init(const cr_ui_callbacks_t *config)
 
     micro_action_title = lv_label_create(micro_action_page);
     lv_label_set_text(micro_action_title, "AGENT 1");
+    lv_obj_set_width(micro_action_title, 320);
+    lv_label_set_long_mode(micro_action_title, LV_LABEL_LONG_DOT);
     lv_obj_align(micro_action_title, LV_ALIGN_TOP_LEFT, 120, 16);
 
     micro_action_status = lv_label_create(micro_action_page);
@@ -675,23 +690,33 @@ void cr_ui_init(const cr_ui_callbacks_t *config)
     micro_action_menu = lv_obj_create(micro_action_page);
     lv_obj_remove_style_all(micro_action_menu);
     lv_obj_set_size(micro_action_menu, LV_PCT(100), LV_PCT(100));
-    make_micro_action_button("批准", CR_MICRO_CONTROL_APPROVE, 20, 76, 0x166534);
-    make_micro_action_button("拒绝", CR_MICRO_CONTROL_DECLINE, 250, 76, 0x991b1b);
-    make_micro_action_button("继续", CR_MICRO_CONTROL_CONTINUE, 20, 164, 0x27272a);
+    static const int32_t action_x[] = {20, 250, 20, 250, 20, 250};
+    static const int32_t action_y[] = {70, 70, 134, 134, 198, 198};
+    for (size_t index = 0; index < CR_MICRO_CONTROL_LABEL_COUNT; index++) {
+        lv_obj_t *button = make_micro_action_button(
+            micro_control_layout.controls[index],
+            (cr_micro_control_t)index,
+            action_x[index],
+            action_y[index],
+            0x27272a
+        );
+        micro_control_labels[index] = lv_obj_get_child(button, 0);
+    }
     make_positioned_button(
-        micro_action_menu, "删除", 250, 164, 210, 76,
+        micro_action_menu, "删除", 20, 262, 210, 60,
         micro_keyboard_action, (void *)(uintptr_t)CR_MICRO_KEYBOARD_DELETE
     );
     make_positioned_button(
-        micro_action_menu, "清除", 20, 252, 210, 76,
+        micro_action_menu, "清除", 250, 262, 210, 60,
         micro_keyboard_action, (void *)(uintptr_t)CR_MICRO_KEYBOARD_CLEAR
     );
-    make_positioned_button(
-        micro_action_menu, "旋钮", 20, 340, 210, 76,
+    lv_obj_t *encoder_entry = make_positioned_button(
+        micro_action_menu, "旋钮", 20, 326, 210, 60,
         micro_view_opened, (void *)(uintptr_t)MICRO_VIEW_ENCODER
     );
+    micro_encoder_entry_label = lv_obj_get_child(encoder_entry, 0);
     make_positioned_button(
-        micro_action_menu, "摇杆", 250, 340, 210, 76,
+        micro_action_menu, "摇杆", 250, 326, 210, 60,
         micro_view_opened, (void *)(uintptr_t)MICRO_VIEW_JOYSTICK
     );
 
@@ -745,10 +770,15 @@ void cr_ui_init(const cr_ui_callbacks_t *config)
         micro_joystick_panel, LV_SYMBOL_DOWN, 190, 298, 100, 86,
         micro_direction, (void *)(uintptr_t)CR_MICRO_DIRECTION_DOWN
     );
-    lv_obj_set_style_text_font(lv_obj_get_child(joystick_up, 0), LV_FONT_DEFAULT, 0);
-    lv_obj_set_style_text_font(lv_obj_get_child(joystick_left, 0), LV_FONT_DEFAULT, 0);
-    lv_obj_set_style_text_font(lv_obj_get_child(joystick_right, 0), LV_FONT_DEFAULT, 0);
-    lv_obj_set_style_text_font(lv_obj_get_child(joystick_down, 0), LV_FONT_DEFAULT, 0);
+    lv_obj_t *joystick_buttons[] = {
+        joystick_up, joystick_right, joystick_down, joystick_left,
+    };
+    for (size_t index = 0; index < CR_MICRO_DIRECTION_LABEL_COUNT; index++) {
+        micro_direction_labels[index] = lv_obj_get_child(joystick_buttons[index], 0);
+        lv_obj_set_width(micro_direction_labels[index], 92);
+        lv_obj_set_style_text_align(micro_direction_labels[index], LV_TEXT_ALIGN_CENTER, 0);
+        lv_label_set_long_mode(micro_direction_labels[index], LV_LABEL_LONG_WRAP);
+    }
     lv_obj_add_flag(micro_joystick_panel, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(micro_back);
     lv_obj_move_foreground(micro_action_title);
@@ -796,10 +826,12 @@ void cr_ui_init(const cr_ui_callbacks_t *config)
     );
     lv_obj_add_flag(mode_confirmation, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(mode_page, LV_OBJ_FLAG_HIDDEN);
+    cr_ui_update_micro_layout(&micro_control_layout);
 }
 
 void cr_ui_update(const cr_device_state_t *state)
 {
+    lv_obj_add_flag(home_list, LV_OBJ_FLAG_SCROLLABLE);
     micro_mode_active = false;
     micro_connected = false;
     micro_action_page_active = false;
@@ -873,6 +905,8 @@ void cr_ui_update(const cr_device_state_t *state)
 void cr_ui_update_micro(const cr_micro_state_t *state)
 {
     if (state == NULL) return;
+    lv_obj_remove_flag(home_list, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_scroll_to_y(home_list, 0, LV_ANIM_OFF);
     micro_mode_active = true;
     micro_connected = state->connected;
     interaction_locked = false;
@@ -944,6 +978,34 @@ void cr_ui_update_micro(const cr_micro_state_t *state)
     } else {
         lv_obj_add_flag(micro_action_page, LV_OBJ_FLAG_HIDDEN);
         lv_obj_remove_flag(home_page, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+void cr_ui_update_micro_layout(const cr_micro_control_layout_t *layout)
+{
+    if (layout == NULL) return;
+    micro_control_layout = *layout;
+    for (size_t index = 0; index < CR_MICRO_CONTROL_LABEL_COUNT; index++) {
+        lv_label_set_text(micro_control_labels[index], micro_control_layout.controls[index]);
+    }
+    lv_label_set_text_fmt(
+        micro_encoder_entry_label,
+        "旋钮 · %s",
+        micro_control_layout.encoder
+    );
+    static const char *const direction_symbols[] = {
+        "上", "右", "下", "左",
+    };
+    for (size_t index = 0; index < CR_MICRO_DIRECTION_LABEL_COUNT; index++) {
+        lv_label_set_text_fmt(
+            micro_direction_labels[index],
+            "%s\n%s",
+            direction_symbols[index],
+            micro_control_layout.directions[index]
+        );
+    }
+    if (micro_action_page_active && micro_view == MICRO_VIEW_ENCODER) {
+        lv_label_set_text_fmt(micro_action_title, "旋钮 · %s", micro_control_layout.encoder);
     }
 }
 

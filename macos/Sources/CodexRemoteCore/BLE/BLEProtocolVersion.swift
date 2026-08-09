@@ -1,7 +1,7 @@
 import Foundation
 
 public struct BLEProtocolVersion: Equatable, Sendable {
-    public static let current = BLEProtocolVersion(major: 1, minor: 2)
+    public static let current = BLEProtocolVersion(major: 1, minor: 3)
 
     public let major: UInt8
     public let minor: UInt8
@@ -28,6 +28,7 @@ public enum BLEMessageType: UInt8, CaseIterable, Sendable {
     case deviceInfo = 0x0d
     case resyncRequired = 0x0e
     case terminalShortcut = 0x0f
+    case microControlLayout = 0x10
 }
 
 public struct BLEEnvelope: Equatable, Sendable {
