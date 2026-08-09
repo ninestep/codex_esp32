@@ -26,7 +26,7 @@ jobs:
           swift-version: '6.2'
 
       - name: Install fixture test tools
-        run: brew install ripgrep
+        run: brew install cjson ripgrep
 
       - name: Run Swift tests
         run: swift test --package-path macos --parallel --disable-sandbox
