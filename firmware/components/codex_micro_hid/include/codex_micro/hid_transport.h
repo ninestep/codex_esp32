@@ -17,6 +17,7 @@ typedef struct {
 
 esp_err_t cr_codex_micro_hid_start(const cr_codex_micro_hid_config_t *config);
 bool cr_codex_micro_hid_is_connected(void);
+esp_err_t cr_codex_micro_hid_set_battery_state(uint8_t battery_percent, bool charging);
 esp_err_t cr_codex_micro_hid_send_agent_key(uint8_t agent_index, bool pressed);
 esp_err_t cr_codex_micro_hid_send_control_key(cr_micro_control_t control, bool pressed);
 esp_err_t cr_codex_micro_hid_send_keyboard_action(cr_micro_keyboard_action_t action);

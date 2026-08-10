@@ -79,6 +79,8 @@ static SemaphoreHandle_t tx_lock;
 static StaticQueue_t device_info_queue_storage;
 static uint8_t device_info_queue_buffer[sizeof(uint16_t)];
 static QueueHandle_t device_info_queue;
+static uint8_t battery_percent;
+static portMUX_TYPE battery_lock = portMUX_INITIALIZER_UNLOCKED;
 
 static void advertise(void);
 
@@ -189,6 +191,9 @@ static int send_message(const cr_message_t *message, uint16_t value_handle, bool
 static cr_message_t make_device_info_message(void)
 {
     static const uint8_t firmware[] = "0.1.0";
+    portENTER_CRITICAL(&battery_lock);
+    uint8_t current_battery_percent = battery_percent;
+    portEXIT_CRITICAL(&battery_lock);
     return (cr_message_t){
         .type = CR_MESSAGE_DEVICE_INFO,
         .body.device_info = {
@@ -196,7 +201,7 @@ static cr_message_t make_device_info_message(void)
             .protocol_minor = CR_PROTOCOL_MINOR,
             .firmware_version = {.bytes = firmware, .length = sizeof(firmware) - 1},
             .capabilities = CR_DEVICE_CAPABILITIES,
-            .battery_percent = 100,
+            .battery_percent = current_battery_percent,
         },
     };
 }
@@ -552,6 +557,26 @@ esp_err_t cr_ble_configure_hid_scan_response(const char *device_name)
 bool cr_ble_is_connected(void)
 {
     return connection_handle != CR_BLE_NO_CONNECTION;
+}
+
+esp_err_t cr_ble_set_battery_level(uint8_t new_battery_percent)
+{
+    ESP_RETURN_ON_FALSE(
+        new_battery_percent <= 100,
+        ESP_ERR_INVALID_ARG,
+        TAG,
+        "invalid battery percentage"
+    );
+    portENTER_CRITICAL(&battery_lock);
+    bool changed = battery_percent != new_battery_percent;
+    battery_percent = new_battery_percent;
+    portEXIT_CRITICAL(&battery_lock);
+
+    if (changed && runtime_prepared && connection_handle != CR_BLE_NO_CONNECTION
+        && (companion_subscription_mask & CR_BLE_SUB_DEVICE_INFO) != 0) {
+        queue_device_info(connection_handle);
+    }
+    return ESP_OK;
 }
 
 esp_err_t cr_ble_start(cr_device_state_t *state, const cr_ble_config_t *config)

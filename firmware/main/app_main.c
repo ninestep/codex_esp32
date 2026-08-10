@@ -10,6 +10,7 @@
 #include "codex_micro/hid_transport.h"
 #include "codex_micro/agent_status.h"
 #include "display_runtime.h"
+#include "power_telemetry.h"
 
 #include "bsp/display.h"
 #include "bsp/esp-bsp.h"
@@ -31,6 +32,7 @@
 #define USER_BUTTON_GPIO GPIO_NUM_18
 #define ENHANCED_PTT_SESSION_KEY UINT16_C(1)
 #define MICRO_INITIAL_SYNC_QUIET_MS UINT64_C(3000)
+#define BATTERY_POLL_INTERVAL_MS UINT32_C(30000)
 
 static const char *TAG = "codex_remote";
 static cr_device_state_t device_state;
@@ -60,6 +62,7 @@ static cr_micro_control_layout_t micro_layout_snapshot;
 static cr_micro_agent_status_t previous_micro_statuses[CR_MICRO_SLOT_COUNT];
 static bool micro_status_baseline_ready;
 static uint64_t micro_notifications_arm_at_ms;
+static cr_power_telemetry_t power_telemetry;
 
 static uint64_t now_ms(void)
 {
@@ -614,6 +617,58 @@ static void power_task(void *context)
     }
 }
 
+static void publish_power_telemetry(const cr_power_telemetry_t *telemetry)
+{
+    uint8_t battery_percent = telemetry->battery_present ? telemetry->battery_percent : 0;
+    ESP_ERROR_CHECK(cr_ble_set_battery_level(battery_percent));
+    ESP_ERROR_CHECK(
+        cr_codex_micro_hid_set_battery_state(battery_percent, telemetry->charging)
+    );
+}
+
+static bool power_telemetry_changed(
+    const cr_power_telemetry_t *previous,
+    const cr_power_telemetry_t *current
+)
+{
+    return previous->battery_present != current->battery_present
+        || previous->charging != current->charging
+        || previous->battery_percent != current->battery_percent
+        || previous->battery_voltage_mv != current->battery_voltage_mv;
+}
+
+static void log_power_telemetry(const cr_power_telemetry_t *telemetry)
+{
+    if (telemetry->battery_present) {
+        ESP_LOGI(
+            TAG,
+            "battery=%u%% voltage=%umV charging=%s",
+            (unsigned)telemetry->battery_percent,
+            (unsigned)telemetry->battery_voltage_mv,
+            telemetry->charging ? "yes" : "no"
+        );
+    } else {
+        ESP_LOGW(TAG, "battery is not connected");
+    }
+}
+
+static void battery_task(void *context)
+{
+    (void)context;
+    while (true) {
+        cr_power_telemetry_t sample;
+        esp_err_t result = cr_power_telemetry_read(&sample);
+        if (result != ESP_OK) {
+            ESP_LOGW(TAG, "battery telemetry read failed: %s", esp_err_to_name(result));
+        } else if (power_telemetry_changed(&power_telemetry, &sample)) {
+            power_telemetry = sample;
+            publish_power_telemetry(&power_telemetry);
+            log_power_telemetry(&power_telemetry);
+        }
+        vTaskDelay(pdMS_TO_TICKS(BATTERY_POLL_INTERVAL_MS));
+    }
+}
+
 static void detail_timeout_task(void *context)
 {
     (void)context;
@@ -675,6 +730,10 @@ void app_main(void)
         ESP_LOGE(TAG, "failed to initialize Waveshare display");
         return;
     }
+    ESP_ERROR_CHECK(cr_power_telemetry_init());
+    ESP_ERROR_CHECK(cr_power_telemetry_read(&power_telemetry));
+    publish_power_telemetry(&power_telemetry);
+    log_power_telemetry(&power_telemetry);
     ESP_ERROR_CHECK(esp_lv_adapter_lock(200));
     cr_ui_callbacks_t ui_callbacks = {
         .select_session = ui_select,
@@ -765,6 +824,10 @@ void app_main(void)
     );
     ESP_ERROR_CHECK(
         xTaskCreate(power_task, "display_power", 3072, NULL, 4, NULL) == pdPASS
+            ? ESP_OK : ESP_ERR_NO_MEM
+    );
+    ESP_ERROR_CHECK(
+        xTaskCreate(battery_task, "battery", 3072, NULL, 4, NULL) == pdPASS
             ? ESP_OK : ESP_ERR_NO_MEM
     );
     ESP_ERROR_CHECK(

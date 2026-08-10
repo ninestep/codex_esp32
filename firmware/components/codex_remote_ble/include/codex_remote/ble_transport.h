@@ -27,6 +27,7 @@ esp_err_t cr_ble_register_hid_companion_services(void);
 esp_err_t cr_ble_configure_hid_scan_response(const char *device_name);
 int cr_ble_handle_shared_gap_event(struct ble_gap_event *event);
 bool cr_ble_is_connected(void);
+esp_err_t cr_ble_set_battery_level(uint8_t battery_percent);
 esp_err_t cr_ble_send_select(uint16_t session_key);
 esp_err_t cr_ble_send_scroll(uint16_t session_key, int16_t delta);
 esp_err_t cr_ble_send_terminal_key(uint16_t session_key, uint8_t key);

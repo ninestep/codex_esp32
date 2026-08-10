@@ -78,8 +78,9 @@ static StackType_t output_report_task_stack[4096];
 static struct report *output_report;
 static uint16_t input_notification_handle;
 static TickType_t input_notification_ready_tick;
-static uint8_t battery_percent = 100;
+static uint8_t battery_percent;
 static bool charging;
+static portMUX_TYPE battery_lock = portMUX_INITIALIZER_UNLOCKED;
 static uint8_t own_address_type;
 static bool service_change_announced;
 
@@ -279,11 +280,15 @@ static void handle_output_report(const uint8_t *data, size_t length)
     char response[CR_MICRO_RPC_RESPONSE_BYTES];
     size_t response_length = 0;
     bool state_changed = false;
+    portENTER_CRITICAL(&battery_lock);
+    uint8_t current_battery_percent = battery_percent;
+    bool currently_charging = charging;
+    portEXIT_CRITICAL(&battery_lock);
     cr_micro_rpc_result_t rpc_result = cr_micro_rpc_respond_with_state(
         reassembler.message,
         reassembler.length,
-        battery_percent,
-        charging,
+        current_battery_percent,
+        currently_charging,
         &micro_state,
         &state_changed,
         response,
@@ -513,6 +518,21 @@ esp_err_t cr_codex_micro_hid_start(const cr_codex_micro_hid_config_t *config)
 bool cr_codex_micro_hid_is_connected(void)
 {
     return hid_device != NULL && esp_hidd_dev_connected(hid_device);
+}
+
+esp_err_t cr_codex_micro_hid_set_battery_state(uint8_t new_battery_percent, bool is_charging)
+{
+    ESP_RETURN_ON_FALSE(
+        new_battery_percent <= 100,
+        ESP_ERR_INVALID_ARG,
+        TAG,
+        "invalid battery percentage"
+    );
+    portENTER_CRITICAL(&battery_lock);
+    battery_percent = new_battery_percent;
+    charging = is_charging;
+    portEXIT_CRITICAL(&battery_lock);
+    return ESP_OK;
 }
 
 esp_err_t cr_codex_micro_hid_send_agent_key(uint8_t agent_index, bool pressed)

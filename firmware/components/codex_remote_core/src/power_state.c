@@ -4,7 +4,6 @@
 
 #define CR_DIM_AFTER_MS UINT64_C(60000)
 #define CR_SCREENSAVER_AFTER_MS UINT64_C(120000)
-#define CR_OFF_AFTER_MS UINT64_C(300000)
 #define CR_ROTATE_AFTER_MS UINT64_C(30000)
 #define CR_URGENT_WAKE_MS UINT64_C(8000)
 
@@ -44,8 +43,7 @@ cr_power_output_t cr_power_update(
         next_mode = CR_POWER_NORMAL;
     } else {
         uint64_t idle_ms = now_ms - state->last_interaction_ms;
-        if (idle_ms >= CR_OFF_AFTER_MS) next_mode = CR_POWER_OFF;
-        else if (idle_ms >= CR_SCREENSAVER_AFTER_MS) next_mode = CR_POWER_SCREENSAVER;
+        if (idle_ms >= CR_SCREENSAVER_AFTER_MS) next_mode = CR_POWER_SCREENSAVER;
         else if (idle_ms >= CR_DIM_AFTER_MS) next_mode = CR_POWER_DIM;
         else next_mode = CR_POWER_NORMAL;
     }
