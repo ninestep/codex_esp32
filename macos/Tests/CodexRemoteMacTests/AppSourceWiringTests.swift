@@ -174,7 +174,9 @@ final class AppSourceWiringTests: XCTestCase {
 
         XCTAssertTrue(menuSource.contains("长按说话 · 单击确认 · 双击取消"))
         XCTAssertTrue(menuSource.contains("Text(\"电量\")"))
-        XCTAssertTrue(menuSource.contains("model.batteryText"))
+        XCTAssertTrue(menuSource.contains("model.batterySummaryText"))
+        XCTAssertTrue(settingsSource.contains("LabeledContent(\"充电状态\""))
+        XCTAssertTrue(settingsSource.contains("model.chargingStatusText"))
         XCTAssertFalse(menuSource.contains("本地服务"))
         XCTAssertFalse(menuSource.contains("snapshot.sessions"))
 

@@ -2,7 +2,7 @@
   "byteOrder" : "little",
   "crc" : "CRC32/IEEE",
   "protocolMajor" : 1,
-  "protocolMinor" : 3,
+  "protocolMinor" : 4,
   "vectors" : [
     {
       "file" : "empty-action-result.hex",

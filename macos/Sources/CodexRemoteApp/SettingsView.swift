@@ -20,6 +20,7 @@ struct SettingsView: View {
                         isReady: model.isDeviceConnected
                     )
                     LabeledContent("电量", value: model.batteryText)
+                    LabeledContent("充电状态", value: model.chargingStatusText)
                     Text("App 会自动查找并重新连接附近的设备。")
                         .font(.caption)
                         .foregroundStyle(.secondary)

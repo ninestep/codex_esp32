@@ -301,7 +301,7 @@ Mac App 需要：
 | `StateToDevice` | Mac → 设备 | 会话快照和增量 | 快照使用 write with response；增量使用 write without response + sequence |
 | `AudioToHost` | 设备 → Mac | 低延迟音频帧 | notify，不重传过期帧 |
 | `AssetToDevice` | Mac → 设备 | JPEG 分块和清单 | write without response；通过 `ControlToHost` 分块确认 + CRC |
-| `DeviceInfo` | 设备 → Mac | 协议、固件、能力和电量 | read；变化时 notify |
+| `DeviceInfo` | 设备 → Mac | 协议、固件、能力、电量和充电状态 | read；变化时 notify |
 
 BLE v1 固定使用一个 128-bit service 和六个 128-bit characteristic UUID：
 

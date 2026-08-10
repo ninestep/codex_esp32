@@ -69,7 +69,14 @@ typedef struct {
         } asset_manifest;
         struct { uint32_t set_id; uint16_t asset_id; uint32_t offset; cr_byte_view_t bytes; } asset_chunk;
         struct { uint32_t set_id; uint16_t asset_id; uint32_t next_offset; uint8_t result; } asset_acknowledgement;
-        struct { uint8_t protocol_major; uint8_t protocol_minor; cr_byte_view_t firmware_version; uint16_t capabilities; uint8_t battery_percent; } device_info;
+        struct {
+            uint8_t protocol_major;
+            uint8_t protocol_minor;
+            cr_byte_view_t firmware_version;
+            uint16_t capabilities;
+            uint8_t battery_percent;
+            bool charging;
+        } device_info;
         struct { uint8_t reason; } resync_required;
         struct {
             cr_byte_view_t controls[CR_MICRO_CONTROL_LABEL_COUNT];

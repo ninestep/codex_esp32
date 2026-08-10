@@ -1,7 +1,7 @@
 import Foundation
 
 public struct BLEProtocolVersion: Equatable, Sendable {
-    public static let current = BLEProtocolVersion(major: 1, minor: 3)
+    public static let current = BLEProtocolVersion(major: 1, minor: 4)
 
     public let major: UInt8
     public let minor: UInt8

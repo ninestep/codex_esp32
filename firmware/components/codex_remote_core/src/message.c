@@ -291,8 +291,11 @@ cr_result_t cr_message_decode(const cr_envelope_view_t *envelope, cr_message_t *
         }
         result = read_string(&reader, CR_MAX_TITLE_BYTES, &message->body.device_info.firmware_version);
         if (result == CR_OK && (!read_u16(&reader, &message->body.device_info.capabilities)
-            || !read_u8(&reader, &message->body.device_info.battery_percent))) result = CR_ERR_TRUNCATED;
+            || !read_u8(&reader, &message->body.device_info.battery_percent)
+            || !read_u8(&reader, &raw8))) result = CR_ERR_TRUNCATED;
         if (result == CR_OK && message->body.device_info.battery_percent > 100) result = CR_ERR_INVALID_PAYLOAD;
+        if (result == CR_OK && raw8 > 1) result = CR_ERR_INVALID_PAYLOAD;
+        if (result == CR_OK) message->body.device_info.charging = raw8 == 1;
         break;
     case CR_MESSAGE_RESYNC_REQUIRED:
         if (!read_u8(&reader, &message->body.resync_required.reason)) result = CR_ERR_TRUNCATED;
@@ -500,6 +503,7 @@ static cr_result_t encode_body(const cr_message_t *message, writer_t *writer)
         if (result != CR_OK) return result;
         write_u16(writer, message->body.device_info.capabilities);
         write_u8(writer, message->body.device_info.battery_percent);
+        write_u8(writer, message->body.device_info.charging ? 1 : 0);
         break;
     case CR_MESSAGE_RESYNC_REQUIRED:
         if (message->body.resync_required.reason < 1 || message->body.resync_required.reason > 4) return CR_ERR_INVALID_PAYLOAD;

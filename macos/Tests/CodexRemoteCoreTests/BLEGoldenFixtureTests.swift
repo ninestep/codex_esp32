@@ -10,7 +10,7 @@ final class BLEGoldenFixtureTests: XCTestCase {
         let generated = try makeFixtureSet()
 
         XCTAssertEqual(manifest.protocolMajor, 1)
-        XCTAssertEqual(manifest.protocolMinor, 3)
+        XCTAssertEqual(manifest.protocolMinor, 4)
         XCTAssertEqual(Set(manifest.vectors.map(\.file)), Set(generated.files.keys.filter { $0.hasSuffix(".hex") }))
 
         for vector in manifest.vectors {
@@ -74,7 +74,12 @@ final class BLEGoldenFixtureTests: XCTestCase {
             ("adpcm-silence", "audioFrame", 10, .audioFrame(silence)),
             ("asset-manifest", "assetManifest", 11, .assetManifest(manifest)),
             ("asset-chunk", "assetChunk", 12, .assetChunk(AssetChunk(setID: 9, assetID: 1, offset: 0, bytes: jpeg))),
-            ("device-info", "deviceInfo", 13, .deviceInfo(DeviceInformation(firmwareVersion: "sim-1", capabilities: [.display, .microphone], batteryPercent: 80))),
+            ("device-info", "deviceInfo", 13, .deviceInfo(DeviceInformation(
+                firmwareVersion: "sim-1",
+                capabilities: [.display, .microphone],
+                batteryPercent: 80,
+                isCharging: true
+            ))),
             ("micro-control-layout", "microControlLayout", 14, .microControlLayout(MicroControlLayout(
                 controls: ["快速模式", "批准", "拒绝", "继续", "按住说话", "发送"],
                 encoder: "会话滚动",
@@ -107,7 +112,7 @@ final class BLEGoldenFixtureTests: XCTestCase {
         files[fragmentFile] = fragments.map(\.hex).joined(separator: "\n") + "\n"
         vectors.append(FixtureVector(name: "two-fragment-message", file: fragmentFile, kind: "fragmentSet", messageType: "selectSession", sequence: 17, outcome: "valid"))
 
-        let fixtureManifest = FixtureManifest(protocolMajor: 1, protocolMinor: 3, byteOrder: "little", crc: "CRC32/IEEE", vectors: vectors)
+        let fixtureManifest = FixtureManifest(protocolMajor: 1, protocolMinor: 4, byteOrder: "little", crc: "CRC32/IEEE", vectors: vectors)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         var manifestData = try encoder.encode(fixtureManifest)

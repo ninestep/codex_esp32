@@ -80,6 +80,7 @@ static StaticQueue_t device_info_queue_storage;
 static uint8_t device_info_queue_buffer[sizeof(uint16_t)];
 static QueueHandle_t device_info_queue;
 static uint8_t battery_percent;
+static bool charging;
 static portMUX_TYPE battery_lock = portMUX_INITIALIZER_UNLOCKED;
 
 static void advertise(void);
@@ -193,6 +194,7 @@ static cr_message_t make_device_info_message(void)
     static const uint8_t firmware[] = "0.1.0";
     portENTER_CRITICAL(&battery_lock);
     uint8_t current_battery_percent = battery_percent;
+    bool currently_charging = charging;
     portEXIT_CRITICAL(&battery_lock);
     return (cr_message_t){
         .type = CR_MESSAGE_DEVICE_INFO,
@@ -202,6 +204,7 @@ static cr_message_t make_device_info_message(void)
             .firmware_version = {.bytes = firmware, .length = sizeof(firmware) - 1},
             .capabilities = CR_DEVICE_CAPABILITIES,
             .battery_percent = current_battery_percent,
+            .charging = currently_charging,
         },
     };
 }
@@ -559,7 +562,7 @@ bool cr_ble_is_connected(void)
     return connection_handle != CR_BLE_NO_CONNECTION;
 }
 
-esp_err_t cr_ble_set_battery_level(uint8_t new_battery_percent)
+esp_err_t cr_ble_set_battery_state(uint8_t new_battery_percent, bool is_charging)
 {
     ESP_RETURN_ON_FALSE(
         new_battery_percent <= 100,
@@ -568,8 +571,9 @@ esp_err_t cr_ble_set_battery_level(uint8_t new_battery_percent)
         "invalid battery percentage"
     );
     portENTER_CRITICAL(&battery_lock);
-    bool changed = battery_percent != new_battery_percent;
+    bool changed = battery_percent != new_battery_percent || charging != is_charging;
     battery_percent = new_battery_percent;
+    charging = is_charging;
     portEXIT_CRITICAL(&battery_lock);
 
     if (changed && runtime_prepared && connection_handle != CR_BLE_NO_CONNECTION

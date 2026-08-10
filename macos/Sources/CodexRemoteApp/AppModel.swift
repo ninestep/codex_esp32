@@ -116,8 +116,18 @@ final class AppModel: ObservableObject {
     }
 
     var batteryText: String {
-        guard let battery = snapshot.deviceInformation?.batteryPercent else { return "--" }
-        return "\(battery)%"
+        guard let information = snapshot.deviceInformation else { return "--" }
+        return "\(information.batteryPercent)%"
+    }
+
+    var chargingStatusText: String {
+        guard let information = snapshot.deviceInformation else { return "--" }
+        return information.isCharging ? "充电中" : "未充电"
+    }
+
+    var batterySummaryText: String {
+        guard snapshot.deviceInformation != nil else { return "--" }
+        return "\(batteryText) · \(chargingStatusText)"
     }
 
     var isDeviceConnected: Bool {

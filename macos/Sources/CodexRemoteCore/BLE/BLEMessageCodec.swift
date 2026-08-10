@@ -117,6 +117,7 @@ public struct BLEMessageCodec: Sendable {
             try encoder.appendString(info.firmwareVersion, maxBytes: 64)
             encoder.append(info.capabilities.rawValue)
             encoder.append(info.batteryPercent)
+            encoder.append(UInt8(info.isCharging ? 1 : 0))
         case let .resyncRequired(reason):
             type = .resyncRequired
             encoder.append(reason.rawValue)
@@ -255,7 +256,16 @@ public struct BLEMessageCodec: Sendable {
             let capabilities = DeviceFeatureCapabilities(rawValue: try decoder.readUInt16())
             let battery = try decoder.readUInt8()
             guard battery <= 100 else { throw BLEMessageCodecError.invalidBatteryPercent(battery) }
-            return .deviceInfo(DeviceInformation(firmwareVersion: firmware, capabilities: capabilities, batteryPercent: battery))
+            let rawCharging = try decoder.readUInt8()
+            guard rawCharging <= 1 else {
+                throw BLEMessageCodecError.invalidBoolean(rawCharging)
+            }
+            return .deviceInfo(DeviceInformation(
+                firmwareVersion: firmware,
+                capabilities: capabilities,
+                batteryPercent: battery,
+                isCharging: rawCharging == 1
+            ))
         case .resyncRequired:
             let raw = try decoder.readUInt8()
             guard let reason = ResyncReason(rawValue: raw) else {

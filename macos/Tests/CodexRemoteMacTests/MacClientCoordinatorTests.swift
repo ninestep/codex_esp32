@@ -235,7 +235,8 @@ final class MacClientCoordinatorTests: XCTestCase {
         DeviceInformation(
             firmwareVersion: "0.1.0",
             capabilities: [.display, .microphone, .touch, .userButton],
-            batteryPercent: 80
+            batteryPercent: 80,
+            isCharging: true
         )
     }
 }

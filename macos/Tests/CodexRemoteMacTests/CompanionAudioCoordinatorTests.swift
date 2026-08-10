@@ -145,7 +145,8 @@ final class CompanionAudioCoordinatorTests: XCTestCase {
         DeviceInformation(
             firmwareVersion: "0.1.2",
             capabilities: [.display, .microphone, .touch, .userButton],
-            batteryPercent: 80
+            batteryPercent: 80,
+            isCharging: true
         )
     }
 }

@@ -31,7 +31,7 @@ struct MenuBarContentView: View {
                         .foregroundStyle(.secondary)
                         .frame(width: 8)
                     Text("电量")
-                    Text(model.batteryText)
+                    Text(model.batterySummaryText)
                         .foregroundStyle(.secondary)
                 }
             }

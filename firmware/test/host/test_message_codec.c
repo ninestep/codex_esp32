@@ -90,6 +90,9 @@ static void assert_message_round_trip(message_fixture_t fixture)
     } else if (fixture.type == CR_MESSAGE_AUDIO_FRAME) {
         assert(message.body.audio_frame.sample_count == 320);
         assert(message.body.audio_frame.encoded_samples.length == 160);
+    } else if (fixture.type == CR_MESSAGE_DEVICE_INFO) {
+        assert(message.body.device_info.battery_percent == 80);
+        assert(message.body.device_info.charging);
     }
 
     uint8_t payload[CR_MAX_ENVELOPE_BYTES] = {0};
@@ -240,6 +243,12 @@ static void test_malformed_payloads_are_rejected(void)
     envelope.payload_length = sizeof(trailing_select);
     assert(cr_message_decode(&envelope, &message) == CR_ERR_TRAILING_BYTES);
 
+    const uint8_t invalid_charging[] = {1, 4, 1, 0, 'x', 0, 0, 80, 2};
+    envelope.type = CR_MESSAGE_DEVICE_INFO;
+    envelope.payload = invalid_charging;
+    envelope.payload_length = sizeof(invalid_charging);
+    assert(cr_message_decode(&envelope, &message) == CR_ERR_INVALID_PAYLOAD);
+
     const uint8_t invalid_utf8_action[] = {1, 0, 0, 0, 0, 1, 0, 0xff};
     envelope.type = CR_MESSAGE_ACTION_RESULT;
     envelope.payload = invalid_utf8_action;
@@ -249,7 +258,7 @@ static void test_malformed_payloads_are_rejected(void)
 
 int main(void)
 {
-    assert(CR_PROTOCOL_MINOR == 3);
+    assert(CR_PROTOCOL_MINOR == 4);
     assert(CR_TERMINAL_KEY_BACKSPACE == 7);
     assert(CR_TERMINAL_KEY_CLEAR_LINE == 8);
     test_all_valid_message_fixtures();

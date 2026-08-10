@@ -12,7 +12,8 @@ final class SimulatedRemoteDeviceTests: XCTestCase {
             .deviceInfo(DeviceInformation(
                 firmwareVersion: "sim-1",
                 capabilities: [.display, .microphone, .touch, .userButton, .assetStorage],
-                batteryPercent: 80
+                batteryPercent: 80,
+                isCharging: true
             )),
         ])
     }
@@ -112,7 +113,8 @@ final class SimulatedRemoteDeviceTests: XCTestCase {
             deviceInformation: DeviceInformation(
                 firmwareVersion: "sim-1",
                 capabilities: [.display, .microphone, .touch, .userButton, .assetStorage],
-                batteryPercent: 80
+                batteryPercent: 80,
+                isCharging: true
             )
         )
     }

@@ -5,8 +5,8 @@ import XCTest
 final class BLEMessageCodecTests: XCTestCase {
     private let codec = BLEMessageCodec()
 
-    func testProtocolV13DefinesControlLayoutAndEditingContract() {
-        XCTAssertEqual(BLEProtocolVersion.current, BLEProtocolVersion(major: 1, minor: 3))
+    func testProtocolV14DefinesChargingControlLayoutAndEditingContract() {
+        XCTAssertEqual(BLEProtocolVersion.current, BLEProtocolVersion(major: 1, minor: 4))
         XCTAssertEqual(RemoteTerminalKey.up.rawValue, 3)
         XCTAssertEqual(RemoteTerminalKey.down.rawValue, 4)
         XCTAssertEqual(RemoteTerminalKey.left.rawValue, 5)
@@ -52,7 +52,12 @@ final class BLEMessageCodecTests: XCTestCase {
             .assetManifest(manifest),
             .assetChunk(AssetChunk(setID: 12, assetID: 1, offset: 0, bytes: Data([1, 2, 3]))),
             .assetAcknowledgement(setID: 12, assetID: 1, nextOffset: 3, result: .accepted),
-            .deviceInfo(DeviceInformation(firmwareVersion: "sim-1", capabilities: [.display, .microphone], batteryPercent: 82)),
+            .deviceInfo(DeviceInformation(
+                firmwareVersion: "sim-1",
+                capabilities: [.display, .microphone],
+                batteryPercent: 82,
+                isCharging: true
+            )),
             .resyncRequired(reason: .sequenceGap),
             .microControlLayout(MicroControlLayout(
                 controls: ["快速模式", "批准", "拒绝", "继续", "按住说话", "发送"],
@@ -144,6 +149,18 @@ final class BLEMessageCodecTests: XCTestCase {
         let envelope = BLEEnvelope(type: .selectSession, sequence: 1, payload: Data([1, 0, 0, 0, 2, 0, 9]))
         XCTAssertThrowsError(try codec.decode(BLEEnvelopeCodec().encode(envelope))) { error in
             XCTAssertEqual(error as? BLECodecError, .trailingBytes(1))
+        }
+
+        var invalidCharging = try codec.encode(.deviceInfo(DeviceInformation(
+            firmwareVersion: "sim-1",
+            capabilities: [.display],
+            batteryPercent: 82,
+            isCharging: true
+        )), sequence: 2)
+        invalidCharging[invalidCharging.index(invalidCharging.endIndex, offsetBy: -5)] = 2
+        rewriteCRC(&invalidCharging)
+        XCTAssertThrowsError(try codec.decode(invalidCharging)) { error in
+            XCTAssertEqual(error as? BLEMessageCodecError, .invalidBoolean(2))
         }
     }
 

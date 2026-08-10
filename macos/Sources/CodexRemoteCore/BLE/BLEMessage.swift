@@ -203,11 +203,18 @@ public struct DeviceInformation: Equatable, Sendable {
     public let firmwareVersion: String
     public let capabilities: DeviceFeatureCapabilities
     public let batteryPercent: UInt8
+    public let isCharging: Bool
 
-    public init(firmwareVersion: String, capabilities: DeviceFeatureCapabilities, batteryPercent: UInt8) {
+    public init(
+        firmwareVersion: String,
+        capabilities: DeviceFeatureCapabilities,
+        batteryPercent: UInt8,
+        isCharging: Bool
+    ) {
         self.firmwareVersion = firmwareVersion
         self.capabilities = capabilities
         self.batteryPercent = batteryPercent
+        self.isCharging = isCharging
     }
 }
 

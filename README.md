@@ -42,7 +42,7 @@ firmware/   ESP-IDF 固件、可复用组件、设备入口和 C17 host tests
 docs/       架构设计、实施计划、验证记录和设备启用手册
 ```
 
-跨端 BLE v1.3 协议由 Swift 与 C 共同实现。修改消息类型、布局、UUID、字段限制或能力位时，必须同步更新两端代码和 `macos/Fixtures/ble-v1/` 中的 golden fixtures。
+跨端 BLE v1.4 协议由 Swift 与 C 共同实现。修改消息类型、布局、UUID、字段限制或能力位时，必须同步更新两端代码和 `macos/Fixtures/ble-v1/` 中的 golden fixtures。
 
 ## 环境要求
 

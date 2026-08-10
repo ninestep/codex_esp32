@@ -620,7 +620,7 @@ static void power_task(void *context)
 static void publish_power_telemetry(const cr_power_telemetry_t *telemetry)
 {
     uint8_t battery_percent = telemetry->battery_present ? telemetry->battery_percent : 0;
-    ESP_ERROR_CHECK(cr_ble_set_battery_level(battery_percent));
+    ESP_ERROR_CHECK(cr_ble_set_battery_state(battery_percent, telemetry->charging));
     ESP_ERROR_CHECK(
         cr_codex_micro_hid_set_battery_state(battery_percent, telemetry->charging)
     );
