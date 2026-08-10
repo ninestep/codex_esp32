@@ -1040,6 +1040,8 @@ void cr_ui_set_power(cr_power_mode_t mode, size_t asset_index)
         lv_obj_remove_flag(screensaver_page, LV_OBJ_FLAG_HIDDEN);
     } else {
         lv_obj_add_flag(screensaver_page, LV_OBJ_FLAG_HIDDEN);
+        /* 长时间待机后全屏遮罩可能残留像素；原地唤醒时主动重绘全部列表内容。 */
+        lv_obj_invalidate(lv_screen_active());
     }
 }
 
