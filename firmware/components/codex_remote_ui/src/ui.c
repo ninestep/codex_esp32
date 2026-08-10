@@ -955,7 +955,7 @@ void cr_ui_update_micro(const cr_micro_state_t *state)
             lv_obj_set_style_border_color(card->card, lv_color_hex(0x52525b), 0);
             lv_obj_set_style_text_color(card->status, card->status_color, 0);
         } else {
-            lv_color_t color = lv_color_hex(slot->color);
+            lv_color_t color = state_border_color(slot_state);
             card->status_color = color;
             lv_obj_set_style_bg_color(card->card, lv_color_mix(color, lv_color_hex(0x09090b), 96), 0);
             lv_obj_set_style_border_color(card->card, color, 0);
@@ -970,7 +970,7 @@ void cr_ui_update_micro(const cr_micro_state_t *state)
         lv_label_set_text(micro_action_status, state_text(slot_state));
         lv_obj_set_style_text_color(
             micro_action_status,
-            slot->configured ? lv_color_hex(slot->color) : lv_color_hex(0xa1a1aa),
+            cards[selected_micro_agent].status_color,
             0
         );
         lv_obj_add_flag(home_page, LV_OBJ_FLAG_HIDDEN);

@@ -138,6 +138,8 @@ int main(void)
     assert(strstr(ui_source, "lv_obj_add_flag(home_list, LV_OBJ_FLAG_SCROLLABLE)") != NULL);
     assert(strstr(ui_source, "lv_obj_add_flag(card->directory, LV_OBJ_FLAG_HIDDEN)") != NULL);
     assert(strstr(ui_source, "lv_obj_invalidate(lv_screen_active())") != NULL);
+    assert(strstr(ui_source, "lv_color_t color = state_border_color(slot_state)") != NULL);
+    assert(strstr(ui_source, "lv_color_hex(slot->color)") == NULL);
     assert(strstr(ui_source, "#%06lX") == NULL);
     assert(strstr(ui_source, "lv_label_set_text(card->status, \"就绪\")") == NULL);
     assert(strstr(ui_source, "MAC APP") != NULL);
