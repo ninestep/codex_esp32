@@ -93,7 +93,7 @@ zsh macos/Scripts/package-app.zsh release /tmp/codex-remote-build
 
 提交前阅读 [Repository Guidelines](AGENTS.md)。提交信息采用 Conventional Commits，例如 `feat(firmware): 同步 Codex Micro 控件布局`。只提交当前任务相关文件，并记录实际测试和未覆盖的硬件风险。
 
-推送 `v*` tag 会触发 GitHub Release workflow，构建 macOS DMG、ESP32-S3 固件包和 checksums。只有 workflow 与 GitHub Release 均成功后，才能认定版本发布完成。
+推送 `v*` tag 会触发 GitHub Release workflow，构建 macOS DMG、Windows x64 ZIP、ESP32-S3 固件包和 checksums。只有 workflow 与 GitHub Release 均成功后，才能认定版本发布完成。
 
 ## License
 

@@ -11,4 +11,4 @@ Build from the repository root:
 
 Hardware acceptance (BLE, WebView2 login, Doubao streaming ASR, and focused-window input) is tracked separately under `docs/verification/` and must not be inferred from a successful build.
 
-Current Windows app version: `0.1.1`. GitHub Actions builds and runs all three deterministic Windows test runners on pull requests and `main`; `v*` tags also publish a framework-dependent `Windows-x64.zip` release asset. The target machine must have the .NET 10 Desktop Runtime installed.
+Current Windows app version: `0.1.1`. Pushing a `v*` tag runs the Release workflow, builds and runs all three deterministic Windows test runners, and publishes a framework-dependent `Windows-x64.zip` release asset together with the other platform artifacts. The target machine must have the .NET 10 Desktop Runtime installed.
