@@ -1,10 +1,10 @@
 # Windows App 增强模式开发计划
 
-**状态：** 待实施
+**状态：** 实施中
 
-**目标平台：** Windows 11 22H2+，首发 x64；ARM64 在 x64 真机闭环后评估
+**目标平台：** Windows 10 22H2（build 19045）及更高版本，首发 x64；ARM64 在 x64 真机闭环后评估
 
-**当前基线：** ESP32 现有固件、BLE v1、Codex Micro HOGP 和 macOS 增强模式
+**当前基线：** Windows 10 22H2 build 19045 x64、仓库本地 .NET SDK 10.0.302、ESP32 现有固件、BLE v1、Codex Micro HOGP 和 macOS 增强模式
 
 ## 1. 目标
 
@@ -46,7 +46,7 @@ Windows 版本需要提供：
 - 移植旧 Ghostty、hooks、Codex CLI 会话控制。
 - 让 Windows App 模拟 Codex Micro HID。
 - 自动提交识别结果。
-- 第一阶段支持 Windows 10、ARM64、商店发布或自动更新。
+- 第一阶段支持 ARM64、商店发布或自动更新。Windows 10 仅支持当前开发与验收环境对应的 22H2（build 19045）x64，不承诺更早版本。
 
 ## 3. 已冻结的架构决策
 
@@ -66,7 +66,7 @@ windows/
 │   ├── CodexRemote.Protocol/       # 无 WinUI、WinRT 依赖
 │   ├── CodexRemote.Core/           # PTT、音频、识别协调状态机
 │   ├── CodexRemote.Windows/        # BLE、WebView2、DPAPI、SendInput
-│   └── CodexRemote.WindowsApp/     # WinUI 3、托盘和设置窗口
+│   └── CodexRemote.WindowsApp/     # WPF、托盘和设置窗口
 ├── tests/
 │   ├── CodexRemote.Protocol.Tests/
 │   ├── CodexRemote.Core.Tests/
@@ -77,7 +77,7 @@ windows/
 - `CodexRemote.Protocol` 和 `CodexRemote.Core` 使用纯 .NET API，可在 macOS 开发机运行单元测试。
 - `CodexRemote.Windows` 隔离 WinRT 和 Win32 API。
 - `CodexRemote.WindowsApp` 只负责装配和界面，不解释 BLE 数据。
-- UI 采用 WinUI 3；系统托盘采用 `System.Windows.Forms.NotifyIcon`。
+- UI 采用 .NET 10 WPF，以适配当前 Windows 10 22H2 图形栈；系统托盘直接使用 Shell 通知图标 API。
 
 ### 3.3 系统能力通过 port 隔离
 
@@ -108,8 +108,8 @@ Windows 端复刻当前 Mac App 已验证的 Cookie、localStorage 和 WebSocket
 
 开始实现前需要确认并锁定：
 
-- 当前受支持的 .NET LTS SDK 和 Windows App SDK 版本。
-- `Microsoft.WindowsAppSDK`、`Microsoft.Web.WebView2` 和测试框架版本。
+- 当前环境的 .NET 10 SDK、Desktop Runtime 和 Windows SDK 版本。
+- WPF、WebView2（若登录流程需要）和测试框架版本。
 - 凭据保护使用 Win32 DPAPI 封装，避免保存明文 Cookie。
 - 首发打包采用 MSIX 还是自包含 unpackaged 可执行文件。
 
@@ -133,7 +133,7 @@ Windows 端复刻当前 Mac App 已验证的 Cookie、localStorage 和 WebSocket
 - [ ] 记录 ChatGPT/Codex App 版本、进程名和普通/管理员权限状态。
 - [ ] 确认 ESP32 能作为 Codex Micro/HID 配对，并记录设备实例。
 - [ ] 确认 Windows 能发现自定义 service UUID，而不只识别 HID 服务。
-- [ ] 安装并记录所选 .NET SDK、Windows App SDK 和 WebView2 Runtime。
+- [x] 安装并记录 .NET 10 SDK、Desktop Runtime；当前 WPF 壳层不依赖 Windows App Runtime。
 - [ ] 在 Windows 机器验证 `dotnet --info`、开发者模式和 MSIX 签名条件。
 
 **Exit gate:** 基线文档包含可复现的系统信息；Windows 能看到设备自定义 GATT 服务。若只能看到 HID，先排查配对、GATT 缓存和广播，不开始应用层开发。

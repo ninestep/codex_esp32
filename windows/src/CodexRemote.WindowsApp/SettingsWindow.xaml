@@ -1,0 +1,29 @@
+<Window x:Class="CodexRemote.WindowsApp.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Codex Remote 设置" Icon="Assets/CodexRemote.ico" Width="820" Height="720"
+        MinWidth="620" MinHeight="520" WindowStartupLocation="CenterScreen">
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Margin="28" MaxWidth="760">
+            <TextBlock Text="Codex Remote" FontSize="30" FontWeight="SemiBold"/>
+            <TextBlock Text="Windows 增强模式" Opacity="0.65" Margin="0,4,0,18"/>
+            <GroupBox Header="设备" Margin="0,0,0,14" Padding="14">
+                <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                    <TextBlock Text="{Binding Model.ConnectionStatus}"/><TextBlock Grid.Column="1" Text="{Binding Model.BatteryText}"/>
+                </Grid>
+            </GroupBox>
+            <GroupBox Header="语音识别" Margin="0,0,0,14" Padding="14">
+                <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                    <TextBlock Text="{Binding Model.LoginStatus}" VerticalAlignment="Center"/>
+                    <Button Grid.Column="1" Content="{Binding Model.LoginActionText}" Padding="16,6" Click="LoginClicked"/>
+                </Grid>
+            </GroupBox>
+            <GroupBox Header="设备控制布局" Margin="0,0,0,14" Padding="14"><ItemsControl ItemsSource="{Binding ControlLabels}"/></GroupBox>
+            <GroupBox Header="启动" Padding="14"><StackPanel>
+                <CheckBox Content="自动连接设备" IsChecked="True" Margin="0,0,0,8"/>
+                <CheckBox Content="登录 Windows 后启动" IsChecked="False" Margin="0,0,0,8"/>
+                <TextBlock Text="安装时不会自动启用开机启动。" Opacity="0.65"/>
+            </StackPanel></GroupBox>
+        </StackPanel>
+    </ScrollViewer>
+</Window>

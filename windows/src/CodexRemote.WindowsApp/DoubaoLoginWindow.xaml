@@ -1,0 +1,14 @@
+<Window x:Class="CodexRemote.WindowsApp.DoubaoLoginWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        Title="登录豆包" Icon="Assets/CodexRemote.ico" Width="980" Height="760" WindowStartupLocation="CenterOwner">
+    <Grid>
+        <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <wv2:WebView2 x:Name="Browser"/>
+        <DockPanel Grid.Row="1" Margin="14">
+            <TextBlock x:Name="Status" Text="请在网页中完成登录，然后点击右侧按钮。" VerticalAlignment="Center"/>
+            <Button Content="我已完成登录" DockPanel.Dock="Right" Padding="18,7" Click="CompleteLoginClicked"/>
+        </DockPanel>
+    </Grid>
+</Window>

@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/CodexRemote.Protocol/CodexRemote.Protocol.csproj" />
+    <Project Path="src/CodexRemote.Core/CodexRemote.Core.csproj" />
+    <Project Path="src/CodexRemote.Windows/CodexRemote.Windows.csproj" />
+    <Project Path="src/CodexRemote.WindowsApp/CodexRemote.WindowsApp.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/CodexRemote.Protocol.Tests/CodexRemote.Protocol.Tests.csproj" />
+    <Project Path="tests/CodexRemote.Core.Tests/CodexRemote.Core.Tests.csproj" />
+    <Project Path="tests/CodexRemote.Windows.Tests/CodexRemote.Windows.Tests.csproj" />
+  </Folder>
+</Solution>

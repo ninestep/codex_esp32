@@ -3,3 +3,13 @@
 macos/.build/
 macos/dist/
 .superpowers
+.dotnet/
+.dotnet-home/
+.nuget/
+.appdata/
+.packages/
+.dotnet-sdk.zip
+.dotnet-install.ps1
+windows/**/bin/
+windows/**/obj/
+windows/artifacts/

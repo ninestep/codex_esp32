@@ -115,11 +115,56 @@ jobs:
           path: CodexRemote-${{ github.ref_name }}-ESP32S3-firmware.tar.gz
           if-no-files-found: error
 
+  package-windows:
+    name: Package Windows x64
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore windows/CodexRemote.Windows.slnx --configfile windows/NuGet.ci.config
+
+      - name: Build
+        run: dotnet build windows/CodexRemote.Windows.slnx -c Release --no-restore
+
+      - name: Run Windows test runners
+        shell: pwsh
+        run: |
+          dotnet run --project windows/tests/CodexRemote.Protocol.Tests/CodexRemote.Protocol.Tests.csproj -c Release --no-build --no-restore
+          dotnet run --project windows/tests/CodexRemote.Core.Tests/CodexRemote.Core.Tests.csproj -c Release --no-build --no-restore
+          dotnet run --project windows/tests/CodexRemote.Windows.Tests/CodexRemote.Windows.Tests.csproj -c Release --no-build --no-restore
+
+      - name: Publish Windows app
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ github.ref_name }}
+        run: |
+          $publish = Join-Path $env:RUNNER_TEMP 'codex-remote-windows'
+          dotnet publish windows/src/CodexRemote.WindowsApp/CodexRemote.WindowsApp.csproj `
+            -c Release -r win-x64 --self-contained false --no-restore `
+            -o $publish
+          Compress-Archive -Path "$publish\*" `
+            -DestinationPath "CodexRemote-$env:RELEASE_VERSION-Windows-x64.zip"
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64
+          path: CodexRemote-${{ github.ref_name }}-Windows-x64.zip
+          if-no-files-found: error
+
   release:
     name: Publish GitHub Release
     needs:
       - package-macos
       - build-firmware
+      - package-windows
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -135,6 +180,12 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: firmware
+          path: release-assets
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-x64
           path: release-assets
 
       - name: Generate checksums
