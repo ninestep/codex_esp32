@@ -40,6 +40,8 @@ static esp_codec_dev_handle_t speaker;
 static SemaphoreHandle_t lock;
 static QueueHandle_t alert_queue;
 static capture_mode_t mode;
+static bool codecs_open;
+static bool alert_active;
 static stored_frame_t pre_roll[PRE_ROLL_FRAME_COUNT];
 static size_t pre_roll_start;
 static size_t pre_roll_count;
@@ -54,6 +56,11 @@ static uint32_t channel_peak[AUDIO_CHANNEL_COUNT];
 static uint64_t channel_absolute_sum[AUDIO_CHANNEL_COUNT];
 static uint64_t channel_sample_count;
 static int16_t alert_pcm_buffer[ALERT_CHUNK_SAMPLES * AUDIO_CHANNEL_COUNT];
+static esp_codec_dev_sample_info_t audio_sample_info = {
+    .bits_per_sample = 16,
+    .channel = AUDIO_CHANNEL_COUNT,
+    .sample_rate = 16000,
+};
 
 static const int16_t sine_table[32] = {
     0, 1278, 2506, 3630, 4609, 5406, 5999, 6364,
@@ -96,6 +103,43 @@ static bool alert_can_continue(void)
     bool allowed = mode == CAPTURE_IDLE;
     xSemaphoreGive(lock);
     return allowed;
+}
+
+static esp_err_t open_codecs(void)
+{
+    if (microphone == NULL || speaker == NULL) return ESP_ERR_INVALID_STATE;
+    if (codecs_open) return ESP_OK;
+    if (esp_codec_dev_open(microphone, &audio_sample_info) != ESP_CODEC_DEV_OK) goto fail;
+    if (esp_codec_dev_set_in_gain(microphone, MICROPHONE_GAIN_DB) != ESP_CODEC_DEV_OK) goto fail;
+    if (esp_codec_dev_open(speaker, &audio_sample_info) != ESP_CODEC_DEV_OK) goto fail;
+    if (esp_codec_dev_set_out_vol(speaker, SPEAKER_VOLUME) != ESP_CODEC_DEV_OK) goto fail;
+    codecs_open = true;
+    log_internal_heap("audio codec opened");
+    ESP_LOGI(TAG, "audio power=on");
+    return ESP_OK;
+
+fail:
+    (void)esp_codec_dev_close(speaker);
+    (void)esp_codec_dev_close(microphone);
+    return ESP_FAIL;
+}
+
+static void close_codecs(void)
+{
+    if (!codecs_open) return;
+    int speaker_result = esp_codec_dev_close(speaker);
+    int microphone_result = esp_codec_dev_close(microphone);
+    codecs_open = false;
+    if (speaker_result != ESP_CODEC_DEV_OK || microphone_result != ESP_CODEC_DEV_OK) {
+        ESP_LOGW(
+            TAG,
+            "audio power=off close failed speaker=%d microphone=%d",
+            speaker_result,
+            microphone_result
+        );
+        return;
+    }
+    ESP_LOGI(TAG, "audio power=off");
 }
 
 static bool play_tone(uint16_t frequency_hz, uint16_t duration_ms)
@@ -142,6 +186,14 @@ static void alert_task(void *context)
     while (true) {
         if (xQueueReceive(alert_queue, &alert, portMAX_DELAY) != pdTRUE) continue;
         if (!alert_can_continue()) continue;
+        xSemaphoreTake(lock, portMAX_DELAY);
+        if (open_codecs() != ESP_OK) {
+            xSemaphoreGive(lock);
+            ESP_LOGW(TAG, "audio alert unavailable: codec open failed");
+            continue;
+        }
+        alert_active = true;
+        xSemaphoreGive(lock);
         ESP_LOGI(TAG, "playing %s alert", alert == CR_AUDIO_ALERT_COMPLETED
             ? "completed" : "requires-input");
         bool played;
@@ -152,6 +204,9 @@ static void alert_task(void *context)
                 && play_tone(660, 80) && play_silence(35) && play_tone(880, 110);
         }
         ESP_LOGI(TAG, "alert playback %s", played ? "completed" : "interrupted");
+        xSemaphoreTake(lock, portMAX_DELAY);
+        alert_active = false;
+        xSemaphoreGive(lock);
     }
 }
 
@@ -254,16 +309,6 @@ esp_err_t cr_audio_capture_init(void)
     if (microphone == NULL) return ESP_FAIL;
     speaker = bsp_audio_codec_speaker_init();
     if (speaker == NULL) return ESP_FAIL;
-    esp_codec_dev_sample_info_t sample_info = {
-        .bits_per_sample = 16,
-        .channel = AUDIO_CHANNEL_COUNT,
-        .sample_rate = 16000,
-    };
-    if (esp_codec_dev_open(microphone, &sample_info) != ESP_CODEC_DEV_OK) return ESP_FAIL;
-    if (esp_codec_dev_set_in_gain(microphone, MICROPHONE_GAIN_DB) != ESP_CODEC_DEV_OK) return ESP_FAIL;
-    if (esp_codec_dev_open(speaker, &sample_info) != ESP_CODEC_DEV_OK) return ESP_FAIL;
-    if (esp_codec_dev_set_out_vol(speaker, SPEAKER_VOLUME) != ESP_CODEC_DEV_OK) return ESP_FAIL;
-    log_internal_heap("audio codec opened");
     lock = xSemaphoreCreateMutex();
     if (lock == NULL) {
         log_internal_heap("audio mutex allocation failed");
@@ -271,6 +316,7 @@ esp_err_t cr_audio_capture_init(void)
     }
     alert_queue = xQueueCreate(1, sizeof(cr_audio_alert_t));
     if (alert_queue == NULL) return ESP_ERR_NO_MEM;
+    if (open_codecs() != ESP_OK) return ESP_FAIL;
     if (xTaskCreate(capture_task, "audio_capture", 4096, NULL, 6, NULL) != pdPASS) {
         log_internal_heap("audio task allocation failed");
         return ESP_ERR_NO_MEM;
@@ -282,6 +328,20 @@ esp_err_t cr_audio_capture_init(void)
     return ESP_OK;
 }
 
+esp_err_t cr_audio_capture_set_powered(bool powered)
+{
+    if (lock == NULL || microphone == NULL || speaker == NULL) return ESP_ERR_INVALID_STATE;
+    xSemaphoreTake(lock, portMAX_DELAY);
+    if (!powered && (mode != CAPTURE_IDLE || alert_active)) {
+        xSemaphoreGive(lock);
+        return ESP_ERR_INVALID_STATE;
+    }
+    esp_err_t result = powered ? open_codecs() : ESP_OK;
+    if (!powered) close_codecs();
+    xSemaphoreGive(lock);
+    return result;
+}
+
 esp_err_t cr_audio_alert_play(cr_audio_alert_t alert)
 {
     if (alert_queue == NULL || lock == NULL || speaker == NULL) return ESP_ERR_INVALID_STATE;
@@ -290,8 +350,10 @@ esp_err_t cr_audio_alert_play(cr_audio_alert_t alert)
     }
     xSemaphoreTake(lock, portMAX_DELAY);
     bool idle = mode == CAPTURE_IDLE;
+    esp_err_t power_result = idle ? open_codecs() : ESP_OK;
     xSemaphoreGive(lock);
     if (!idle) return ESP_ERR_INVALID_STATE;
+    if (power_result != ESP_OK) return power_result;
     return xQueueOverwrite(alert_queue, &alert) == pdPASS ? ESP_OK : ESP_FAIL;
 }
 
@@ -302,6 +364,11 @@ esp_err_t cr_audio_capture_prepare(uint32_t *first_sequence)
     if (mode != CAPTURE_IDLE) {
         xSemaphoreGive(lock);
         return ESP_ERR_INVALID_STATE;
+    }
+    esp_err_t power_result = open_codecs();
+    if (power_result != ESP_OK) {
+        xSemaphoreGive(lock);
+        return power_result;
     }
     pre_roll_start = 0;
     pre_roll_count = 0;

@@ -11,6 +11,7 @@
 #include "codex_micro/agent_status.h"
 #include "display_runtime.h"
 #include "power_telemetry.h"
+#include "power_log.h"
 
 #include "bsp/display.h"
 #include "bsp/esp-bsp.h"
@@ -19,6 +20,7 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "esp_lv_adapter.h"
+#include "esp_pm.h"
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -63,6 +65,8 @@ static cr_micro_agent_status_t previous_micro_statuses[CR_MICRO_SLOT_COUNT];
 static bool micro_status_baseline_ready;
 static uint64_t micro_notifications_arm_at_ms;
 static cr_power_telemetry_t power_telemetry;
+static uint64_t power_telemetry_sample_ms;
+static bool power_telemetry_ready;
 
 static uint64_t now_ms(void)
 {
@@ -592,24 +596,50 @@ static void button_task(void *context)
     }
 }
 
+static void set_display_output_enabled(bool enabled)
+{
+    esp_err_t result = cr_display_set_output_enabled(enabled);
+    if (result != ESP_OK) {
+        ESP_LOGW(TAG, "display output %s failed: %s", enabled ? "enable" : "disable", esp_err_to_name(result));
+    }
+}
+
 static void power_task(void *context)
 {
     (void)context;
     while (true) {
         cr_power_output_t output;
+        cr_power_mode_t previous_power_mode;
         bool mode_changed;
+        bool ptt_active = device_state.ptt_active || audio_prepared
+            || micro_button_ptt_active || enhanced_ptt_active;
         portENTER_CRITICAL(&power_lock);
-        output = cr_power_update(&power_state, now_ms(), device_state.ptt_active, 0);
+        output = cr_power_update(&power_state, now_ms(), ptt_active, 0);
+        previous_power_mode = current_power_mode;
         mode_changed = output.mode != current_power_mode;
         current_power_mode = output.mode;
         portEXIT_CRITICAL(&power_lock);
+        if (output.mode == CR_POWER_OFF && audio_available) {
+            esp_err_t audio_result = cr_audio_capture_set_powered(false);
+            if (audio_result != ESP_OK && audio_result != ESP_ERR_INVALID_STATE) {
+                ESP_LOGW(TAG, "audio idle power-down failed: %s", esp_err_to_name(audio_result));
+            }
+        }
         if (mode_changed) {
             int brightness = output.mode == CR_POWER_NORMAL ? 100
                 : output.mode == CR_POWER_DIM ? 25
-                : output.mode == CR_POWER_SCREENSAVER ? 40 : 0;
+                : output.mode == CR_POWER_SCREENSAVER ? 15 : 0;
             if (esp_lv_adapter_lock(200) == ESP_OK) {
+                if (output.mode == CR_POWER_OFF) {
+                    (void)bsp_display_brightness_set(0);
+                    set_display_output_enabled(false);
+                } else if (previous_power_mode == CR_POWER_OFF) {
+                    set_display_output_enabled(true);
+                    (void)bsp_display_brightness_set(brightness);
+                } else {
+                    (void)bsp_display_brightness_set(brightness);
+                }
                 cr_ui_set_power(output.mode, output.asset_index);
-                (void)bsp_display_brightness_set(brightness);
                 esp_lv_adapter_unlock();
             }
         }
@@ -637,34 +667,76 @@ static bool power_telemetry_changed(
         || previous->battery_voltage_mv != current->battery_voltage_mv;
 }
 
-static void log_power_telemetry(const cr_power_telemetry_t *telemetry)
+static void log_power_telemetry(
+    const cr_power_telemetry_t *previous,
+    const cr_power_telemetry_t *telemetry,
+    uint64_t interval_ms,
+    uint64_t sampled_at_ms
+)
 {
+    int percent_delta = power_telemetry_ready
+        ? (int)telemetry->battery_percent - (int)previous->battery_percent : 0;
+    int voltage_delta = power_telemetry_ready
+        ? (int)telemetry->battery_voltage_mv - (int)previous->battery_voltage_mv : 0;
     if (telemetry->battery_present) {
         ESP_LOGI(
             TAG,
-            "battery=%u%% voltage=%umV charging=%s",
+            "power_sample uptime_ms=%" PRIu64 " interval_ms=%" PRIu64
+            " mode=%u battery=%u%% voltage=%umV charging=%s"
+            " delta_percent=%d delta_voltage_mv=%d",
+            sampled_at_ms,
+            interval_ms,
+            (unsigned)current_power_mode,
             (unsigned)telemetry->battery_percent,
             (unsigned)telemetry->battery_voltage_mv,
-            telemetry->charging ? "yes" : "no"
+            telemetry->charging ? "yes" : "no",
+            percent_delta,
+            voltage_delta
         );
     } else {
-        ESP_LOGW(TAG, "battery is not connected");
+        ESP_LOGW(
+            TAG,
+            "power_sample uptime_ms=%" PRIu64 " interval_ms=%" PRIu64
+            " mode=%u battery_present=no charging=%s",
+            sampled_at_ms,
+            interval_ms,
+            (unsigned)current_power_mode,
+            telemetry->charging ? "yes" : "no"
+        );
     }
 }
 
 static void battery_task(void *context)
 {
     (void)context;
+    // 等主任务释放启动栈后再挂载日志，优先保证业务任务的内部 RAM。
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    esp_err_t log_result = cr_power_log_init();
+    if (log_result != ESP_OK) {
+        ESP_LOGE(TAG, "offline power logging unavailable: %s", esp_err_to_name(log_result));
+    }
     while (true) {
         cr_power_telemetry_t sample;
         esp_err_t result = cr_power_telemetry_read(&sample);
         if (result != ESP_OK) {
             ESP_LOGW(TAG, "battery telemetry read failed: %s", esp_err_to_name(result));
-        } else if (power_telemetry_changed(&power_telemetry, &sample)) {
+            cr_power_log_record(now_ms(), (unsigned)current_power_mode, NULL, result);
+        } else {
+            uint64_t sampled_at_ms = now_ms();
+            uint64_t interval_ms = power_telemetry_ready
+                ? sampled_at_ms - power_telemetry_sample_ms : 0;
+            bool changed = power_telemetry_changed(&power_telemetry, &sample);
+            cr_power_telemetry_t previous = power_telemetry;
             power_telemetry = sample;
-            publish_power_telemetry(&power_telemetry);
-            log_power_telemetry(&power_telemetry);
+            power_telemetry_sample_ms = sampled_at_ms;
+            if (!power_telemetry_ready || changed) {
+                publish_power_telemetry(&power_telemetry);
+            }
+            log_power_telemetry(&previous, &power_telemetry, interval_ms, sampled_at_ms);
+            cr_power_log_record(sampled_at_ms, (unsigned)current_power_mode, &sample, ESP_OK);
+            power_telemetry_ready = true;
         }
+        cr_power_log_poll_export();
         vTaskDelay(pdMS_TO_TICKS(BATTERY_POLL_INTERVAL_MS));
     }
 }
@@ -691,9 +763,25 @@ static void detail_timeout_task(void *context)
     }
 }
 
+static void configure_power_management(void)
+{
+#if CONFIG_PM_ENABLE
+    const esp_pm_config_t config = {
+        .max_freq_mhz = CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
+        .min_freq_mhz = CONFIG_XTAL_FREQ,
+        .light_sleep_enable = true,
+    };
+    ESP_ERROR_CHECK(esp_pm_configure(&config));
+#else
+    ESP_LOGW(TAG, "power management is disabled in sdkconfig");
+#endif
+}
+
 void app_main(void)
 {
     ESP_ERROR_CHECK(initialize_nvs());
+    configure_power_management();
+    ESP_LOGI(TAG, "boot reset_reason=%d", (int)esp_reset_reason());
     cr_connection_mode_t stored_mode = CR_CONNECTION_MODE_UNCONFIGURED;
     esp_err_t mode_result = cr_connection_mode_store_load(&stored_mode);
     if (mode_result != ESP_OK) {
@@ -733,7 +821,11 @@ void app_main(void)
     ESP_ERROR_CHECK(cr_power_telemetry_init());
     ESP_ERROR_CHECK(cr_power_telemetry_read(&power_telemetry));
     publish_power_telemetry(&power_telemetry);
-    log_power_telemetry(&power_telemetry);
+    power_telemetry_sample_ms = now_ms();
+    log_power_telemetry(&power_telemetry, &power_telemetry, 0, power_telemetry_sample_ms);
+    cr_power_log_record(power_telemetry_sample_ms, (unsigned)current_power_mode,
+                        &power_telemetry, ESP_OK);
+    power_telemetry_ready = true;
     ESP_ERROR_CHECK(esp_lv_adapter_lock(200));
     cr_ui_callbacks_t ui_callbacks = {
         .select_session = ui_select,
@@ -827,7 +919,7 @@ void app_main(void)
             ? ESP_OK : ESP_ERR_NO_MEM
     );
     ESP_ERROR_CHECK(
-        xTaskCreate(battery_task, "battery", 3072, NULL, 4, NULL) == pdPASS
+        xTaskCreate(battery_task, "battery", 4096, NULL, 4, NULL) == pdPASS
             ? ESP_OK : ESP_ERR_NO_MEM
     );
     ESP_ERROR_CHECK(

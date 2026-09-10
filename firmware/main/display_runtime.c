@@ -13,6 +13,7 @@
 #include "esp_lv_adapter_input.h"
 
 static const char *TAG = "display_runtime";
+static esp_lcd_panel_handle_t display_panel;
 
 static bool result_ok(esp_err_t result, const char *message)
 {
@@ -43,6 +44,7 @@ lv_display_t *cr_display_start(void)
     if (!result_ok(bsp_display_new(&panel_config, &panel, &panel_io), "panel init failed")) {
         return NULL;
     }
+    display_panel = panel;
 
     const esp_lv_adapter_display_config_t display_config = {
         .panel = panel,
@@ -85,4 +87,15 @@ lv_display_t *cr_display_start(void)
     ESP_LOGI(TAG, "display buffers: %u x %u bytes, internal RAM",
              CR_DISPLAY_BUFFER_COUNT, CR_DISPLAY_BUFFER_BYTES);
     return display;
+}
+
+esp_err_t cr_display_set_output_enabled(bool enabled)
+{
+    ESP_RETURN_ON_FALSE(
+        display_panel != NULL,
+        ESP_ERR_INVALID_STATE,
+        TAG,
+        "display panel is unavailable"
+    );
+    return esp_lcd_panel_disp_on_off(display_panel, enabled);
 }

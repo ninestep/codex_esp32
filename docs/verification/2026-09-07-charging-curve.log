@@ -1,0 +1,22 @@
+2026-09-07T11:04:00 I (2629) power_telemetry: charger_config phase=before input_limit_ma=1500 cc_limit_ma=500 target_mv=4200 die_ctrl=0x03 vindpm_cfg=0x06 input_cfg=0x04 enable=0x0a ts=0x10 precharge=0x02 cc=0x0b termination=0x11 cv=0x03 thermal_cfg=0x02 timer=0xe6
+2026-09-07T11:04:00 I (2653) power_telemetry: charger_config phase=after input_limit_ma=1500 cc_limit_ma=500 target_mv=4200 die_ctrl=0x03 vindpm_cfg=0x06 input_cfg=0x04 enable=0x0a ts=0x10 precharge=0x02 cc=0x0b termination=0x11 cv=0x03 thermal_cfg=0x02 timer=0xe6
+2026-09-07T11:04:00 I (2675) power_telemetry: charger_sample stage=cc vbus_mv=5013 vbus_good=1 vindpm=0 current_limited=0 thermal_regulation=0 status=0x3832 irq_latched=0x108b6a charge_timeout_latched=1
+2026-09-07T11:04:00 I (2691) codex_remote: power_sample uptime_ms=1646 interval_ms=0 mode=0 battery=90% voltage=4163mV charging=yes delta_percent=0 delta_voltage_mv=0
+2026-09-07T11:04:01 I (3233) power_telemetry: charger_sample stage=cc vbus_mv=5013 vbus_good=1 vindpm=0 current_limited=0 thermal_regulation=0 status=0x3832 irq_latched=0x108b6a charge_timeout_latched=1
+2026-09-07T11:04:01 I (3254) codex_remote: power_sample uptime_ms=2209 interval_ms=563 mode=0 battery=90% voltage=4165mV charging=yes delta_percent=0 delta_voltage_mv=2
+2026-09-07T11:04:31 I (33272) power_telemetry: charger_sample stage=cv vbus_mv=5041 vbus_good=1 vindpm=0 current_limited=0 thermal_regulation=0 status=0x3833 irq_latched=0x108b6a charge_timeout_latched=1
+2026-09-07T11:04:31 I (33278) codex_remote: power_sample uptime_ms=32232 interval_ms=30023 mode=0 battery=90% voltage=4173mV charging=yes delta_percent=0 delta_voltage_mv=8
+2026-09-07T11:05:01 I (63291) power_telemetry: charger_sample stage=cv vbus_mv=5039 vbus_good=1 vindpm=0 current_limited=0 thermal_regulation=0 status=0x3833 irq_latched=0x108b6a charge_timeout_latched=1
+2026-09-07T11:05:01 I (63296) codex_remote: power_sample uptime_ms=62251 interval_ms=30019 mode=1 battery=90% voltage=4176mV charging=yes delta_percent=0 delta_voltage_mv=3
+2026-09-07T11:05:31 I (93310) power_telemetry: charger_sample stage=cv vbus_mv=5041 vbus_good=1 vindpm=0 current_limited=0 thermal_regulation=0 status=0x3833 irq_latched=0x108b6a charge_timeout_latched=1
+2026-09-07T11:05:31 I (93316) codex_remote: power_sample uptime_ms=92270 interval_ms=30019 mode=1 battery=91% voltage=4181mV charging=yes delta_percent=1 delta_voltage_mv=5
+2026-09-07T11:26:32 I (1354258) power_telemetry: charger_sample stage=cv vbus_mv=5099 vbus_good=1 vindpm=0 current_limited=0 thermal_regulation=0 status=0x3833 irq_latched=0x108b6a charge_timeout_latched=1
+2026-09-07T11:26:32 I (1354264) codex_remote: power_sample uptime_ms=1353219 interval_ms=30014 mode=3 battery=100% voltage=4197mV charging=yes delta_percent=0 delta_voltage_mv=-1
+2026-09-07T11:27:02 I (1384278) power_telemetry: charger_sample stage=cv vbus_mv=5104 vbus_good=1 vindpm=0 current_limited=0 thermal_regulation=0 status=0x3833 irq_latched=0x108b6a charge_timeout_latched=1
+2026-09-07T11:27:02 I (1384283) codex_remote: power_sample uptime_ms=1383238 interval_ms=30019 mode=3 battery=100% voltage=4196mV charging=yes delta_percent=0 delta_voltage_mv=-1
+2026-09-07T11:27:32 I (1414298) power_telemetry: charger_sample stage=cv vbus_mv=5101 vbus_good=1 vindpm=0 current_limited=0 thermal_regulation=0 status=0x3833 irq_latched=0x108b6a charge_timeout_latched=1
+2026-09-07T11:27:32 I (1414304) codex_remote: power_sample uptime_ms=1413259 interval_ms=30021 mode=3 battery=100% voltage=4198mV charging=yes delta_percent=0 delta_voltage_mv=2
+2026-09-07T11:28:02 I (1444318) power_telemetry: charger_sample stage=cv vbus_mv=5105 vbus_good=1 vindpm=0 current_limited=0 thermal_regulation=0 status=0x3833 irq_latched=0x108b6a charge_timeout_latched=1
+2026-09-07T11:28:02 I (1444324) codex_remote: power_sample uptime_ms=1443278 interval_ms=30019 mode=3 battery=100% voltage=4197mV charging=yes delta_percent=0 delta_voltage_mv=-1
+2026-09-07T11:28:32 I (1474338) power_telemetry: charger_sample stage=cv vbus_mv=5104 vbus_good=1 vindpm=0 current_limited=0 thermal_regulation=0 status=0x3833 irq_latched=0x108b6a charge_timeout_latched=1
+2026-09-07T11:28:32 I (1474344) codex_remote: power_sample uptime_ms=1473298 interval_ms=30020 mode=3 battery=100% voltage=4198mV charging=yes delta_percent=0 delta_voltage_mv=1

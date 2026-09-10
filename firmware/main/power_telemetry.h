@@ -11,6 +11,9 @@ typedef struct {
     bool charging;
     uint8_t battery_percent;
     uint16_t battery_voltage_mv;
+    int16_t vbus_voltage_mv;
+    uint8_t pmu_status[2];
+    uint8_t irq_latched[3];
 } cr_power_telemetry_t;
 
 esp_err_t cr_power_telemetry_init(void);

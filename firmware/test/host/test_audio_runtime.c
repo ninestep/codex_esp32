@@ -50,7 +50,7 @@ int main(void)
     );
     assert(strstr(cmake_source, "-Wframe-larger-than=1024") != NULL);
 
-    char app_source[32768];
+    char app_source[40000];
     read_source("firmware/main/app_main.c", app_source, sizeof(app_source));
     const char *audio_init = strstr(app_source, "cr_audio_capture_init()");
     const char *display_init = strstr(app_source, "cr_display_start()");
@@ -59,12 +59,17 @@ int main(void)
     assert(display_init < audio_init);
     assert(strstr(app_source, "if (cr_audio_capture_prepare(&pending_first_audio_sequence) != ESP_OK)") != NULL);
     assert(strstr(app_source, "if (cr_audio_capture_commit() != ESP_OK)") != NULL);
+    assert(strstr(app_source, "cr_audio_capture_set_powered(false)") != NULL);
+    assert(strstr(app_source, "power_sample uptime_ms=") != NULL);
+    assert(strstr(app_source, "boot reset_reason=") != NULL);
     assert(strstr(app_source, "cr_ble_send_ptt_end(device_state.selected_session_key, 0)") != NULL);
     assert(strstr(audio_source, "heap_caps_get_free_size(MALLOC_CAP_INTERNAL)") != NULL);
     assert(strstr(audio_source, "heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)") != NULL);
     assert(strstr(audio_source, "I2S_SLOT_MODE_STEREO") != NULL);
     assert(strstr(audio_source, ".channel = AUDIO_CHANNEL_COUNT") != NULL);
     assert(strstr(audio_source, "esp_codec_dev_set_in_gain(microphone, MICROPHONE_GAIN_DB)") != NULL);
+    assert(strstr(audio_source, "esp_codec_dev_close(speaker)") != NULL);
+    assert(strstr(audio_source, "cr_audio_capture_set_powered(bool powered)") != NULL);
     assert(strstr(audio_source, "microphone summary: samples=") != NULL);
 
     puts("test_audio_runtime: PASS");

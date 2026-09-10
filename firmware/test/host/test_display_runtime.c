@@ -41,9 +41,13 @@ int main(void)
     const char *adapter_start = strstr(display_source, "esp_lv_adapter_start()");
     assert(brightness_init != NULL && adapter_start != NULL && brightness_init < adapter_start);
 
-    char app_source[32768];
+    char app_source[65536];
     read_source("firmware/main/app_main.c", app_source, sizeof(app_source));
     assert(strstr(app_source, "bsp_display_backlight_on()") == NULL);
+    assert(strstr(app_source, "set_display_output_enabled(false)") != NULL);
+    assert(strstr(app_source, "CONFIG_XTAL_FREQ") != NULL);
+    assert(strstr(app_source, "esp_pm_configure") != NULL);
+    assert(strstr(app_source, "#if CONFIG_PM_ENABLE") != NULL);
     assert(strstr(app_source, "xQueueOverwrite(ui_state_queue, state)") != NULL);
     assert(strstr(app_source, "xTaskCreate(ui_state_task, \"ui_state\"") != NULL);
     const char *display_start = strstr(app_source, "if (cr_display_start() == NULL)");
@@ -80,6 +84,13 @@ int main(void)
     );
     assert(strstr(hid_transport_source, "subscribed_report->id == CR_MICRO_REPORT_ID") != NULL);
     assert(strstr(hid_transport_source, "subscribed_report->type == BLE_SVC_HID_RPT_TYPE_INPUT") != NULL);
+    assert(strstr(hid_transport_source, "CR_MICRO_OUTPUT_POLL_MS 10") != NULL);
+    assert(strstr(hid_transport_source, "vTaskDelay(pdMS_TO_TICKS(1))") == NULL);
+
+    char sdkconfig_defaults_source[8192];
+    read_source("firmware/sdkconfig.defaults", sdkconfig_defaults_source, sizeof(sdkconfig_defaults_source));
+    assert(strstr(sdkconfig_defaults_source, "CONFIG_PM_ENABLE=y") != NULL);
+    assert(strstr(sdkconfig_defaults_source, "CONFIG_FREERTOS_USE_TICKLESS_IDLE=y") != NULL);
 
     char ui_source[65536];
     read_source("firmware/components/codex_remote_ui/src/ui.c", ui_source, sizeof(ui_source));

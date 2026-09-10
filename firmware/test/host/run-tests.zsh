@@ -13,7 +13,7 @@ if (( ${#targets} == 0 )); then
     targets=(all)
 fi
 if [[ ${targets[1]} == all ]]; then
-    targets=(test_codec test_message_codec test_device_state test_input_state test_interaction_policy test_connection_mode test_codex_micro_vendor_frame test_codex_micro_state test_codex_micro_agent_status test_audio_frame test_audio_runtime test_asset_state test_power_state test_ble_advertising test_ble_connection_order test_display_runtime)
+    targets=(test_codec test_message_codec test_device_state test_input_state test_interaction_policy test_connection_mode test_codex_micro_vendor_frame test_codex_micro_state test_codex_micro_agent_status test_audio_frame test_audio_runtime test_asset_state test_power_state test_power_telemetry test_power_log test_ble_advertising test_ble_connection_order test_display_runtime)
 fi
 
 source_files=(${core_dir}/src/*.c(N))
@@ -88,6 +88,9 @@ for target in "${targets[@]}"; do
         target_sources+=("${ble_dir}/src/advertising_layout.c")
     elif [[ ${target} == test_display_runtime ]]; then
         include_dirs+=(-I "${repo_root}/firmware/main")
+    elif [[ ${target} == test_power_telemetry || ${target} == test_power_log ]]; then
+        include_dirs+=(-I "${script_dir}/stubs")
+        target_sources=()
     fi
 
     xcrun clang \

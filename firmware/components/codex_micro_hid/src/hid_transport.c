@@ -33,6 +33,7 @@
 #define CR_MICRO_NOTIFY_READY_BIT BIT0
 #define CR_MICRO_NOTIFY_SETTLE_MS 20
 #define CR_MICRO_KEYBOARD_REPORT_GAP_MS 12
+#define CR_MICRO_OUTPUT_POLL_MS 10
 void ble_store_config_init(void);
 
 typedef struct {
@@ -249,7 +250,7 @@ static void output_report_task(void *context)
             ESP_LOGI(TAG, "host HID report received: %u bytes", (unsigned)length);
             handle_output_report(data, length);
         }
-        vTaskDelay(pdMS_TO_TICKS(1));
+        vTaskDelay(pdMS_TO_TICKS(CR_MICRO_OUTPUT_POLL_MS));
     }
 }
 
