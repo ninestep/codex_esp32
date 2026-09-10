@@ -4,6 +4,26 @@ Codex Remote 由 macOS App 和 ESP32-S3 设备组成。设备通过 480×480 AMO
 
 仓库也提供 Windows x64 伴随客户端，安装方式见下文。
 
+## 界面预览
+
+以下为设备实拍与 macOS 客户端截图。设备上的 Command 文案、旋钮模式及摇杆方向操作随当前配置同步。
+
+| Agent 首页 | 操作页 |
+| --- | --- |
+| <img src="docs/images/codex-micro-agents.jpg" alt="Codex Micro 首页：六个 Agent 卡片及连接状态" width="360"> | <img src="docs/images/codex-micro-actions.jpg" alt="Agent 操作页：六个 Command、删除、清除、旋钮与摇杆入口" width="360"> |
+| 2×3 卡片展示六个 Agent 的状态。 | 集中显示当前 Agent 的快捷操作。 |
+
+| 摇杆页 | 旋钮页 |
+| --- | --- |
+| <img src="docs/images/codex-micro-joystick.jpg" alt="摇杆页：上、右、下、左四个方向及配置的操作" width="360"> | <img src="docs/images/codex-micro-encoder.jpg" alt="旋钮页：外圈左右操作与中心点击、长按按钮" width="360"> |
+| 显示四个方向对应的操作。 | 外圈支持左右操作，中心支持点击与长按。 |
+
+### macOS 菜单栏
+
+显示设备连接、语音识别就绪状态、电量与充电状态，并提供设置入口。
+
+<img src="docs/images/macos-menu-status.png" alt="Codex Remote 菜单栏：设备已连接、豆包语音识别已就绪及电量状态" width="320">
+
 ## 安装指南
 
 ### 下载发布包
